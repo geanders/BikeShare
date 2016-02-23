@@ -1,0 +1,468 @@
+---
+title: "Linear regression"
+author: "Brooke Anderson"
+date: "February 22, 2016"
+output: pdf_document
+---
+
+```{r}
+knitr::opts_knit$set(root.dir = "..") # Reset root directory for analysis
+library(lubridate) # To help handle dates
+library(dplyr) # Data wrangling
+library(ggplot2) # Plotting
+library(gridExtra) # To arrange multiple ggplot objects in one graph
+```
+
+Read in and clean up the data:
+
+```{r}
+train <- read.csv("data/train.csv", as.is = TRUE) # `as.is` so `datetime` comes in as
+                                                  # character, not factor
+test <- read.csv("data/test.csv", as.is = TRUE)
+
+train <- mutate(train,
+                datetime = ymd_hms(datetime),
+                year = factor(year(datetime)),
+                hour = factor(hour(datetime)),
+                month = month(datetime),
+                yday = yday(datetime),
+                season = factor(season, levels = c(1, 2, 3, 4),
+                                labels = c("Winter", "Spring", "Summer", "Fall")),
+                workingday = factor(workingday, levels = c(0, 1),
+                                    labels = c("Holiday / weekend",
+                                               "Working day")))
+test  <- mutate(test,
+                datetime = ymd_hms(datetime),
+                year = factor(year(datetime)),
+                hour = factor(hour(datetime)),
+                month = month(datetime),
+                yday = yday(datetime),
+                season = factor(season, levels = c(1, 2, 3, 4),
+                                labels = c("Winter", "Spring", "Summer", "Fall")),
+                workingday = factor(workingday, levels = c(0, 1),
+                                    labels = c("Holiday / weekend",
+                                               "Working day")))
+```
+
+## Intercept-only model
+
+Fit a linear regression with only an intercept, to get an idea of the performance of a very simple model: 
+
+```{r}
+mod_0 <- glm(count ~ 1, data = train)
+```
+
+Determine the RMSLE in the training data. From Kaggle, the equation is: 
+
+$$
+\mbox{RMSLE} = \sqrt{\frac{1}{n} \sum_{i = 1}^{n}\left ( log(p_i + 1) - log(a_i + 1) \right )^2}
+$$
+
+```{r}
+rmsle <- function(train_preds, actual_preds){
+  log_p_1 <- log(train_preds + 1)
+  log_a_1 <- log(actual_preds + 1)
+  sle <- (log_p_1 - log_a_1)^2
+  rmsle <- sqrt(mean(sle))
+  return(rmsle)
+}
+```
+
+```{r}
+train_preds <- predict(mod_0)
+actual_preds <- train$count
+rmsle(train_preds, actual_preds)
+```
+
+I'll also write out predictions to submit to Kaggle:
+
+```{r}
+write_test_preds <- function(test_preds, mod_name){
+  out_file <- data.frame(datetime = as.character(test$datetime),
+                         count = test_preds)
+  out_name <- paste0("test_predictions/", mod_name, ".csv")
+  write.csv(out_file, file = out_name, row.names = FALSE)
+}
+```
+
+```{r}
+test_preds <- predict(mod_0, newdata = test)
+write_test_preds(test_preds, mod_name = "intercept_only")
+```
+
+On Kaggle, this model resulted in a RMSLE of 1.58456.
+
+## Linear regression
+
+Fit a linear regression based on hour of the day, working day, and season (all modeled as factors):
+
+```{r}
+mod_1 <- glm(count ~ hour*workingday*season, # `*` means fit interaction + main effects
+             data = train)
+```
+
+```{r}
+train_preds <- predict(mod_1)
+actual_preds <- train$count
+rmsle(train_preds, actual_preds)
+```
+
+The RMSLE is now a third of it's value with the intercept-only model. I also tried it on Kaggle: 
+
+```{r}
+test_preds <- predict(mod_1, newdata = test)
+write_test_preds(test_preds, mod_name = "hour_workday_season")
+```
+
+On Kaggle, this had an RMSLE of 0.57524. 
+
+## GLM adding weather and temperature
+
+Next, I kept the interaction between `hour` and `workingday` and added in `weather` and `temp` (naively not adjusting for the fact that I probably have some collinearity). At first, I was having some problems with this because I was getting negative predictions, which couldn't be handled by the `rmsle` function, so I fit the model using `family = quasipoisson`. This will (among other things) prevent any predictions from being below zero.
+
+```{r}
+mod_2 <- glm(count ~ hour*workingday*season + factor(weather) + temp, 
+             data = train, family = quasipoisson)
+```
+
+```{r}
+train_preds <- predict(mod_2, type = "response")
+actual_preds <- train$count
+rmsle(train_preds, actual_preds)
+```
+
+The RMSLE continues to improve for the training data. I also submitted to Kaggle: 
+
+```{r}
+test_preds <- predict(mod_2, newdata = test, type = "response")
+write_test_preds(test_preds, mod_name = "hour_workday_season_weather_temp")
+```
+
+The RMSLE on the Leaderboard testing data was 0.48868.
+
+I looked at predictions versus actual values, and there seem to be two groupings in this graph, one where the model overpredicts and one where it underpredicts: 
+
+```{r}
+qplot(train_preds, actual_preds, alpha = I(0.1), size = I(0.5)) +
+  theme_minimal() 
+```
+
+I also looked at model residuals by time. It looks like the model needs to include the year of the observation: 
+
+```{r}
+qplot(x = train$datetime, y = actual_preds - train_preds,
+      alpha = I(0.2), size = I(0.5)) + 
+  theme_bw()
+```
+
+## Adding in year as a factor
+
+Based on the residuals by time for the previous model, `year` may be a useful predictor: 
+
+```{r}
+mod_3 <- glm(count ~ year*hour*workingday*season + factor(weather) + temp, 
+             data = train, family = quasipoisson)
+```
+
+```{r}
+train_preds <- predict(mod_3, type = "response")
+actual_preds <- train$count
+rmsle(train_preds, actual_preds)
+```
+
+The RMSLE improves quite a bit for the training data with adding the year. I also submitted to Kaggle: 
+
+```{r}
+test_preds <- predict(mod_3, newdata = test, type = "response")
+write_test_preds(test_preds, mod_name = "year_hour_workday_season_weather_temp")
+```
+
+This submission scored 0.43228. 
+
+The residual plots look much better for this model, too:
+
+```{r}
+qplot(train_preds, actual_preds, alpha = I(0.1), size = I(0.5)) +
+  theme_minimal()
+```
+
+```{r}
+qplot(x = train$datetime, y = actual_preds - train_preds,
+      alpha = I(0.2), size = I(0.5)) + 
+  theme_bw()
+```
+
+Looking a bit more at the residuals, it may help to include a non-linear function of temperature as a predictor: 
+
+```{r}
+qplot(x = train$temp, y = actual_preds - train_preds,
+      alpha = I(0.2), size = I(0.5)) + 
+  geom_smooth() + 
+  theme_bw() 
+```
+
+It looks like the model consistently tends to underpredict when actual counts are very high:
+
+```{r}
+qplot(x = actual_preds, y = actual_preds - train_preds,
+      alpha = I(0.2), size = I(0.5)) + 
+  geom_smooth() + 
+  theme_bw() 
+```
+
+I'm not sure that humidity or windspeed will help much: 
+
+```{r}
+qplot(x = train$humidity, y = actual_preds - train_preds,
+      alpha = I(0.2), size = I(0.5)) + 
+  geom_smooth() + 
+  theme_bw() 
+
+qplot(x = train$windspeed, y = actual_preds - train_preds,
+      alpha = I(0.2), size = I(0.5)) + 
+  geom_smooth() + 
+  theme_bw() 
+```
+
+## Non-linear function for temperature
+
+Based on the residuals by temperature for the previous model, it may be possible to improve the model by using a non-linear function of `temp`. I did this using a natural cubic spline, using the `ns` function from the `splines` package. I places the knots at the higher temperatures where there seemed to be a pattern with residuals before: 
+
+```{r}
+library(splines)
+mod_4 <- glm(count ~ year*hour*workingday*season + factor(weather) + 
+               ns(temp, knots = c(30, 35)),
+             data = train, family = quasipoisson)
+```
+
+```{r}
+train_preds <- predict(mod_4, type = "response")
+actual_preds <- train$count
+rmsle(train_preds, actual_preds)
+```
+
+The RMSLE improves some for this model. I also submitted to Kaggle: 
+
+```{r}
+test_preds <- predict(mod_4, newdata = test, type = "response")
+write_test_preds(test_preds, mod_name = "year_hour_workday_season_weather_ns_temp")
+```
+
+This submission scored 0.41048. 
+
+This helped with the pattern in the residuals and temperature:
+
+```{r}
+qplot(x = train$temp, y = actual_preds - train_preds,
+      alpha = I(0.2), size = I(0.5)) + 
+  geom_smooth() + 
+  theme_bw() 
+```
+
+It looks like there might be a relationship with weather lagged by one day, particularly for the "3" category of weather: 
+
+```{r}
+qplot(x = lag(train$weather, 1), y = actual_preds - train_preds,
+      alpha = I(0.2), size = I(0.5)) + 
+  theme_bw() 
+```
+
+## Adding weather at lag 1
+
+Based on the residuals by temperature for the previous model, it may be possible to improve the model by using a non-linear function of `temp`. I did this using a natural cubic spline, using the `ns` function from the `splines` package. I places the knots at the higher temperatures where there seemed to be a pattern with residuals before: 
+
+```{r}
+library(splines)
+mod_5 <- glm(count ~ year*hour*workingday*season + 
+               factor(weather)*factor(lag(weather, 1)) + 
+               ns(temp, knots = c(30, 35)),
+             data = train, family = quasipoisson)
+```
+
+```{r}
+train_preds <- c(predict(mod_4, type = "response")[1], # Need to use last model to 
+                 predict(mod_5, type = "response"))    # predict first observation
+actual_preds <- train$count 
+rmsle(train_preds, actual_preds)
+```
+
+The RMSLE improves some for this model. I also submitted to Kaggle: 
+
+```{r}
+test_preds <- predict(mod_5, newdata = test, type = "response")
+test_preds <- c(predict(mod_4, newdata = test, type = "response")[1],
+                test_preds[2:length(test_preds)])
+write_test_preds(test_preds, mod_name = "year_hour_workday_season_lag_weather_ns_temp")
+```
+
+This submission scored 0.39710. 
+
+It looks like there are still some patterns between weather and residuals for the winter: 
+
+```{r}
+to_plot <- data.frame(temp = train$temp, 
+                      resid = actual_preds - train_preds,
+                      season = train$season)
+
+ggplot(to_plot, aes(x = temp, y = resid)) + 
+  geom_point(alpha = 0.2, size = 0.5) + 
+  geom_smooth() + 
+  facet_wrap(~ season, ncol = 2) + 
+  theme_bw() 
+```
+
+## Adding extra temperature spline for winter
+
+Based on the residuals by temperature for the previous model, it may be possible to improve the model by using a non-linear function of `temp`. I did this using a natural cubic spline, using the `ns` function from the `splines` package. I places the knots at the higher temperatures where there seemed to be a pattern with residuals before: 
+
+```{r}
+mod_6 <- glm(count ~ year*hour*workingday*season + 
+               factor(weather) + factor(lag(weather, 1)) + 
+               ns(temp, knots = c(30, 35)) + 
+               I(season == "Winter"):ns(temp, knots = c(20, 25)),
+             data = train, family = quasipoisson)
+```
+
+```{r}
+train_preds <- c(predict(mod_4, type = "response")[1], # Need to use last model to 
+                 predict(mod_6, type = "response"))    # predict first observation
+actual_preds <- train$count 
+rmsle(train_preds, actual_preds)
+```
+
+This improves RMSLE, but just a tiny bit. I also submitted to Kaggle: 
+
+```{r}
+test_preds <- predict(mod_6, newdata = test, type = "response")
+test_preds <- c(predict(mod_4, newdata = test, type = "response")[1],
+                test_preds[2:length(test_preds)])
+write_test_preds(test_preds, mod_name = "year_hour_workday_season_lag_weather_ns_temp_winter")
+```
+
+(It looks like I might be pushing things to try to fit this model.) This submission scored 0.39943, a bit worse than the last model. 
+
+```{r, warning = FALSE, message = FALSE}
+check_resids <- mutate(train, 
+                       resid = actual_preds - train_preds) %>%
+  arrange(resid)
+
+ggplot(check_resids, aes(x = resid)) + 
+  geom_histogram(color = "gray", fill = "white") + 
+  facet_grid(season ~ workingday) + 
+  theme_bw()
+
+check_resids[1:3, ]
+```
+
+```{r}
+unusual_date <- which.min(actual_preds - train_preds)
+unusual_time <- train[unusual_date, "datetime"]
+unusual_day <- train[floor_date(train[ , "datetime"], "day")
+  == floor_date(train[unusual_date, "datetime"], "day"), ]
+
+a <- ggplot(unusual_day, aes(x = datetime, y = count)) + 
+     geom_line() + 
+     geom_line(aes(y = casual), color = "lightblue") + 
+     geom_line(aes(y = registered), color = "lightgreen") + 
+     geom_point(aes(x = unusual_time,
+                    y = unusual_day[unusual_day$datetime == unusual_time, "count"]),
+                color = "red") + 
+     theme_minimal()
+b <- ggplot(unusual_day, aes(x = datetime, y = temp)) + 
+  geom_line() + 
+  geom_point(aes(x = unusual_time,
+                    y = unusual_day[unusual_day$datetime == unusual_time, "temp"]),
+                color = "red") + 
+  theme_minimal()
+c <- ggplot(unusual_day, aes(x = datetime, y = weather)) + 
+  geom_point() + 
+  geom_point(aes(x = unusual_time,
+                    y = unusual_day[unusual_day$datetime == unusual_time, "weather"]),
+                color = "red") + 
+  theme_minimal()
+d <- ggplot(unusual_day, aes(x = datetime, y = humidity)) + 
+  geom_line() + 
+  geom_point(aes(x = unusual_time,
+                    y = unusual_day[unusual_day$datetime == unusual_time, "humidity"]),
+                color = "red") + 
+  theme_minimal()
+e <- ggplot(unusual_day, aes(x = datetime, y = windspeed)) + 
+  geom_line() + 
+  geom_point(aes(x = unusual_time,
+                    y = unusual_day[unusual_day$datetime == unusual_time,
+                                    "windspeed"]),
+                color = "red") + 
+  theme_minimal()
+grid.arrange(a, b, c, d, e, ncol = 2)
+```
+
+```{r}
+unusual_date <- which.max(actual_preds - train_preds)
+unusual_time <- train[unusual_date, "datetime"]
+unusual_day <- train[floor_date(train[ , "datetime"], "day")
+  == floor_date(train[unusual_date, "datetime"], "day"), ]
+
+a <- ggplot(unusual_day, aes(x = datetime, y = count)) + 
+     geom_line() + 
+     geom_line(aes(y = casual), color = "lightblue") + 
+     geom_line(aes(y = registered), color = "lightgreen") + 
+     geom_point(aes(x = unusual_time,
+                    y = unusual_day[unusual_day$datetime == unusual_time, "count"]),
+                color = "red") + 
+     theme_minimal()
+b <- ggplot(unusual_day, aes(x = datetime, y = temp)) + 
+  geom_line() + 
+  geom_point(aes(x = unusual_time,
+                    y = unusual_day[unusual_day$datetime == unusual_time, "temp"]),
+                color = "red") + 
+  theme_minimal()
+c <- ggplot(unusual_day, aes(x = datetime, y = weather)) + 
+  geom_point() + 
+  geom_point(aes(x = unusual_time,
+                    y = unusual_day[unusual_day$datetime == unusual_time, "weather"]),
+                color = "red") + 
+  theme_minimal()
+d <- ggplot(unusual_day, aes(x = datetime, y = humidity)) + 
+  geom_line() + 
+  geom_point(aes(x = unusual_time,
+                    y = unusual_day[unusual_day$datetime == unusual_time, "humidity"]),
+                color = "red") + 
+  theme_minimal()
+e <- ggplot(unusual_day, aes(x = datetime, y = windspeed)) + 
+  geom_line() + 
+  geom_point(aes(x = unusual_time,
+                    y = unusual_day[unusual_day$datetime == unusual_time,
+                                    "windspeed"]),
+                color = "red") + 
+  theme_minimal()
+grid.arrange(a, b, c, d, e, ncol = 2)
+```
+
+## Adding interaction between current and lag-1 weather
+
+Based on the residuals by temperature for the previous model, it may be possible to improve the model by using a non-linear function of `temp`. I did this using a natural cubic spline, using the `ns` function from the `splines` package. I places the knots at the higher temperatures where there seemed to be a pattern with residuals before: 
+
+```{r}
+mod_7 <- glm(count ~ year*hour*workingday*season + 
+               factor(weather)*factor(lag(weather, 1)) + 
+               ns(temp, knots = c(30, 35)),
+             data = train, family = quasipoisson)
+```
+
+```{r}
+train_preds <- c(predict(mod_4, type = "response")[1], # Need to use last model to 
+                 predict(mod_7, type = "response"))    # predict first observation
+actual_preds <- train$count 
+rmsle(train_preds, actual_preds)
+```
+
+The RMSLE improves some for this model. I also submitted to Kaggle: 
+
+```{r}
+test_preds <- predict(mod_7, newdata = test, type = "response")
+test_preds <- c(predict(mod_4, newdata = test, type = "response")[1],
+                test_preds[2:length(test_preds)])
+write_test_preds(test_preds, mod_name = "year_hour_workday_season_lag_weather_int_ns_temp")
+```
+
+This submission scored 0.39539. 

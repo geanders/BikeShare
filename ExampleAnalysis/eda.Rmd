@@ -1,0 +1,106 @@
+---
+title: "Exploratory Data Analysis"
+author: "Brooke Anderson"
+date: "February 22, 2016"
+output: pdf_document
+---
+
+```{r}
+knitr::opts_knit$set(root.dir = "..") # Reset root directory for analysis
+library(lubridate) # To help handle dates
+library(dplyr) # Data wrangling
+library(ggplot2) # Plotting
+```
+
+Read in the data:
+
+```{r}
+train <- read.csv("data/train.csv", as.is = TRUE) # `as.is` so `datetime` comes in as
+                                                  # character, not factor
+test <- read.csv("data/test.csv", as.is = TRUE)
+```
+
+How much data?
+
+```{r}
+dim(train)
+dim(test)
+```
+
+Type of data: 
+
+```{r}
+str(train)
+```
+
+Distribution of response variable: 
+
+```{r message = FALSE, warning = FALSE, fig.width = 5.5, fig.height = 2.5}
+ggplot(train, aes(x = count)) + 
+  geom_histogram(color = "gray", fill = "white") + 
+  theme_minimal()
+```
+
+## Exploring patterns in bike use by time
+
+Convert `datetime` to the right kind of R object and create columns for months, hours, and day of year of each observation: 
+
+```{r}
+train <- mutate(train,
+                datetime = ymd_hms(datetime),
+                hour = hour(datetime),
+                month = month(datetime),
+                yday = yday(datetime),
+                season = factor(season, levels = c(1, 2, 3, 4),
+                                labels = c("Winter", "Spring", "Summer", "Fall")),
+                workingday = factor(workingday, levels = c(0, 1),
+                                    labels = c("Holiday / weekend",
+                                               "Working day")))
+test  <- mutate(test,
+                datetime = ymd_hms(datetime),
+                hour = hour(datetime),
+                month = month(datetime),
+                yday = yday(datetime),
+                season = factor(season, levels = c(1, 2, 3, 4),
+                                labels = c("Winter", "Spring", "Summer", "Fall")),
+                workingday = factor(workingday, levels = c(0, 1),
+                                    labels = c("Holiday / weekend",
+                                               "Working day")))
+```
+
+```{r fig.width = 7, fig.height = 3}
+ggplot(train, aes(x = datetime, y = count)) + 
+  geom_point(alpha = 0.2, size = 0.5) + 
+  geom_point(aes(y = 1000), data = test, # Plot times of testing data
+             color = "red", alpha = 0.2, size = 0.5) + 
+  theme_minimal()
+```
+
+The training observations go from `r min(train$datetime)` to `r max(train$datetime)`. The testing observations go from `r min(test$datetime)` to `r max(test$datetime)`. The `test` data times are interspersed with the `train` times. 
+
+A few things stand out: 
+
+- There's a clear seasonal trend, with more bike use in the summer than winter
+- There's more variation in bike use in the warmer seasons
+- There's an increase trend over the time period in bike use (maybe they made more bikes available or opened more locations between the start and end of the period?)
+- There are always observations when few or no bikes are being used. Perhaps this is observations taken during the middle of the night?
+
+If you look at the counts by hour, it does look like most of the zero or near-zero counts occur between 10:00 pm and 5:00 am. There also seems to be a pretty big pick-up during times when people would commute (7:00 to 9:00 am and 5:00 to 7:00 pm):
+
+```{r fig.width = 7, fig.height = 3}
+ggplot(train, aes(x = factor(hour), y = count)) + 
+  geom_boxplot(outlier.shape = NA) + # Don't plot outliers since I'm overlaying points
+  geom_jitter(alpha = 0.1, size = 0.5, width = 0.5) + 
+  theme_bw()
+```
+
+These patterns are pretty different for working days (`workingday` = 1) versus weekends or holidays (`workingday` = 0), which suggests that interactions between `hour` and `workingday` might be useful. An interaction with `season` might also be useful:
+
+```{r fig.width = 7, fig.height = 5}
+ggplot(train, aes(x = factor(hour), y = count)) + 
+  geom_boxplot(outlier.shape = NA) + # Don't plot outliers since I'm overlaying points
+  geom_jitter(aes(color = season), 
+              alpha = 0.25, size = 0.7, width = 0.7) + 
+  facet_wrap(~ workingday, ncol = 1) + 
+  theme_minimal()
+```
