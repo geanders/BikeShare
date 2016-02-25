@@ -1,0 +1,375 @@
+---
+title: "Class notes-- Feb. 25"
+author: "Brooke Anderson"
+date: "February 25, 2016"
+font-size: 8pt
+output: beamer_presentation
+---
+
+```{r echo = FALSE, message = FALSE, warning = FALSE}
+knitr::opts_knit$set(root.dir = "..", # Reset root directory for analysis
+                     echo = FALSE, message = FALSE, warning = FALSE)
+library(lubridate) # To help handle dates
+library(dplyr) # Data wrangling
+library(ggplot2) # Plotting
+library(gridExtra) # To arrange multiple ggplot objects in one graph
+library(caret) # machine learning
+library(randomForest)
+```
+
+## Adding datetime features
+
+```{r echo = TRUE, cache = TRUE}
+train <- read.csv("data/train.csv", as.is = TRUE) 
+test <- read.csv("data/test.csv", as.is = TRUE)
+
+train <- mutate(train,
+                datetime = ymd_hms(datetime),
+                year = factor(year(datetime)),
+                hour = factor(hour(datetime)),
+                month = month(datetime),
+                yday = yday(datetime))
+```
+
+```{r echo = FALSE, cache = TRUE}
+train <- mutate(train,
+                weather = factor(weather, levels = c(1, 2, 3, 4),
+                                 labels = c("Clear", "Mist", "Light Precip",
+                                            "Heavy Precip")),
+                season = factor(season, levels = c(1, 2, 3, 4),
+                                labels = c("Spring", "Summer", "Fall", "Winter")),
+                workingday = factor(workingday, levels = c(0, 1),
+                                    labels = c("Holiday / weekend",
+                                               "Working day")))
+```
+```{r echo = FALSE, cache = TRUE}
+test  <- mutate(test,
+                datetime = ymd_hms(datetime),
+                year = factor(year(datetime)),
+                hour = factor(hour(datetime)),
+                month = month(datetime),
+                yday = yday(datetime),
+                weather = factor(weather, levels = c(1, 2, 3, 4),
+                                 labels = c("Clear", "Mist", "Light Precip",
+                                            "Heavy Precip")),
+                season = factor(season, levels = c(1, 2, 3, 4),
+                                labels = c("Spring", "Summer", "Fall", "Winter")),
+                workingday = factor(workingday, levels = c(0, 1),
+                                    labels = c("Holiday / weekend",
+                                               "Working day")))
+```
+
+## Distribution of response variable
+
+```{r message = FALSE, warning = FALSE, fig.width = 5.5, fig.height = 2.5, echo = FALSE}
+ggplot(train, aes(x = count)) + 
+  geom_histogram(color = "gray", fill = "white") + 
+  theme_minimal()
+```
+
+## Exploring patterns in bike use by time
+
+Number of bikes in use by times. Red points show observation times of testing data. \bigskip
+
+```{r echo = FALSE, fig.width = 7, fig.height = 3}
+ggplot(train, aes(x = datetime, y = count)) + 
+  geom_point(alpha = 0.2, size = 0.5) + 
+  geom_point(aes(y = 1000), data = test, # Plot times of testing data
+             color = "red", alpha = 0.2, size = 0.5) + 
+  theme_minimal()
+```
+
+## Exploring patterns in bike use by time
+
+```{r fig.width = 7, fig.height = 3, echo = FALSE}
+ggplot(train, aes(x = factor(hour), y = count)) + 
+  geom_boxplot(outlier.shape = NA) + # Don't plot outliers since I'm overlaying points
+  geom_jitter(alpha = 0.1, size = 0.5, width = 0.5) + 
+  theme_bw()
+```
+
+## Exploring patterns in bike use by time
+
+```{r fig.width = 7, fig.height = 5, echo = FALSE}
+ggplot(train, aes(x = factor(hour), y = count)) + 
+  geom_boxplot(outlier.shape = NA) + # Don't plot outliers since I'm overlaying points
+  geom_jitter(aes(color = season), 
+              alpha = 0.25, size = 0.7, width = 0.7) + 
+  facet_wrap(~ workingday, ncol = 1) + 
+  theme_minimal()
+```
+
+## RMSLE
+
+From Kaggle: 
+
+$$
+\mbox{RMSLE} = \sqrt{\frac{1}{n} \sum_{i = 1}^{n}\left ( log(p_i + 1) - log(a_i + 1) \right )^2}
+$$
+
+## RMSLE
+
+```{r}
+rmsle <- function(train_preds, actual_preds){
+  log_p_1 <- log(train_preds + 1)
+  log_a_1 <- log(actual_preds + 1)
+  sle <- (log_p_1 - log_a_1)^2
+  rmsle <- sqrt(mean(sle))
+  return(rmsle)
+}
+```
+
+## Intercept-only model
+
+```{r cache = TRUE}
+mod_0 <- glm(count ~ 1, data = train)
+train_preds <- predict(mod_0)
+actual_preds <- train$count
+rmsle(train_preds, actual_preds)
+```
+
+## Function to write Kaggle submission
+
+```{r}
+write_test_preds <- function(test_preds, mod_name){
+  out_file <- data.frame(datetime = 
+                           as.character(test$datetime),
+                         count = test_preds)
+  out_name <- paste0("test_predictions/", mod_name,
+                     ".csv")
+  write.csv(out_file, file = out_name, row.names = FALSE)
+}
+```
+
+## Linear regression
+
+Fit a linear regression based on hour of the day, working day, and season (all modeled as factors). On Kaggle: 0.57524.
+
+```{r cache = TRUE}
+mod_1 <- glm(count ~ hour*workingday*season, 
+             data = train)
+train_preds <- predict(mod_1)
+actual_preds <- train$count
+rmsle(train_preds, actual_preds)
+```
+
+## Linear regression
+
+Adding `weather` and `temperature`-- on Kaggle: 0.48868. 
+
+```{r cache = TRUE}
+mod_2 <- glm(count ~ hour*workingday*season + 
+               weather + temp, 
+             data = train, family = quasipoisson)
+train_preds <- predict(mod_2, type = "response")
+actual_preds <- train$count
+rmsle(train_preds, actual_preds)
+```
+
+## Linear regression
+
+```{r echo = FALSE}
+qplot(train_preds, actual_preds, alpha = I(0.1), size = I(0.5)) +
+  theme_minimal() 
+```
+
+## Linear regression
+
+```{r echo = FALSE}
+qplot(x = train$datetime, y = actual_preds - train_preds,
+      alpha = I(0.2), size = I(0.5)) + 
+  theme_bw()
+```
+
+## Linear regression
+
+Based on the residuals by time for the previous model, `year` may be a useful predictor-- on Kaggle: 0.43228. 
+
+```{r cache = TRUE}
+mod_3 <- glm(count ~ year*hour*workingday*season + 
+               weather + temp, 
+             data = train, family = quasipoisson)
+train_preds <- predict(mod_3, type = "response")
+actual_preds <- train$count
+rmsle(train_preds, actual_preds)
+```
+
+## Linear regression
+
+```{r echo = FALSE}
+qplot(train_preds, actual_preds, alpha = I(0.1), size = I(0.5)) +
+  theme_minimal()
+```
+
+## Linear regression
+
+```{r echo = FALSE}
+qplot(x = train$datetime, y = actual_preds - train_preds,
+      alpha = I(0.2), size = I(0.5)) + 
+  theme_bw()
+```
+
+## Linear regression
+
+Looking a bit more at the residuals, it may help to include a non-linear function of temperature as a predictor: \bigskip
+
+```{r echo = FALSE}
+qplot(x = train$temp, y = actual_preds - train_preds,
+      alpha = I(0.2), size = I(0.5)) + 
+  geom_smooth() + 
+  theme_bw() 
+```
+
+## Linear regression
+
+Add spline with knots at high temperature-- on Kaggle: 0.41048.
+
+```{r cache = TRUE}
+library(splines)
+mod_4 <- glm(count ~ year*hour*workingday*season + 
+               weather + 
+               ns(temp, knots = c(30, 35)),
+             data = train, family = quasipoisson)
+train_preds <- predict(mod_4, type = "response")
+actual_preds <- train$count
+rmsle(train_preds, actual_preds)
+```
+
+## Linear regression
+
+```{r echo = FALSE}
+qplot(x = train$temp, y = actual_preds - train_preds,
+      alpha = I(0.2), size = I(0.5)) + 
+  geom_smooth() + 
+  theme_bw() 
+```
+
+## Tuning with `caret`
+
+You first must create a function with your loss function. It needs to input a dataframe with the columns `pred` and `obs` and output a numeric vector with a name.
+
+```{r}
+rmsle_fun <- function(data, lev = NULL,
+                      model = NULL, ...){
+  log_p_1 <- log(data$pred + 1)
+  log_a_1 <- log(data$obs + 1)
+  sle <- (log_p_1 - log_a_1)^2
+  rmsle <- sqrt(mean(sle))
+  names(rmsle) <- "rmsle"
+  return(rmsle)
+}
+```
+
+## Tuning with `caret`
+
+Next, specity to use that function in a `trainControl` object using the `summaryFunction` argument. You'll reference this argument when you `train`.
+
+```{r}
+fitControl <- trainControl(method = "cv",
+                           number = 5,
+                           summaryFunction = rmsle_fun)
+```
+
+## Tuning a k-NN model
+
+```{r cache = TRUE}
+set.seed(825)
+mod_1 <- train(count ~ temp + hour + workingday + year,
+               data = train,
+               method = "knn",
+               trControl = fitControl,
+               metric = "rmsle",
+               maximize = FALSE,
+               preProcess = c("center", "scale",
+                              "spatialSign"),
+               tuneLength = 5)
+
+train_preds <- predict(mod_1, newdata = train)
+rmsle(train_preds, train$count)
+```
+
+## Tuning a k-NN model
+
+```{r}
+mod_1
+```
+
+## Tuning a k-NN model
+
+```{r}
+plot(mod_1)
+```
+
+## Tuning a regression tree model
+
+```{r cache = TRUE}
+set.seed(825)
+mod_2 <- train(count ~ season + holiday + workingday +
+                 weather + temp + atemp + humidity + 
+                 windspeed + year + hour + 
+                 month + yday,
+               data = train,
+               method = "rpart2",
+               trControl = fitControl,
+               metric = "rmsle",
+               maximize = FALSE,
+               tuneLength = 12)
+```
+
+## Tuning a regression tree model
+
+```{r fig.width = 5, fig.height = 3}
+plot(mod_2)
+```
+
+## Tuning a regression tree model
+
+```{r fig.width = 7, fig.height = 4}
+library(rpart.plot)
+prp(mod_2$finalModel)
+```
+
+## Tuning a regression tree model
+
+On Kaggle: 1.29878. 
+
+```{r}
+train_preds <- predict(mod_2, newdata = train)
+rmsle(train_preds, train$count)
+```
+
+## Tuning a regression tree model
+
+```{r cache = TRUE}
+set.seed(825)
+mod_3 <- train(count ~ season + holiday + workingday +
+                 as.numeric(weather) + temp + atemp + 
+                 humidity + windspeed + year + 
+                 as.numeric(hour) + month + yday,
+               data = train,
+               method = "rpart2",
+               trControl = fitControl,
+               metric = "rmsle",
+               maximize = FALSE,
+               tuneLength = 12)
+```
+
+## Tuning a regression tree model
+
+```{r fig.width = 5, fig.height = 3}
+plot(mod_3)
+```
+
+## Tuning a regression tree model
+
+```{r fig.width = 7, fig.height = 4}
+library(rpart.plot)
+prp(mod_3$finalModel)
+```
+
+## Tuning a regression tree model
+
+```{r}
+train_preds <- predict(mod_3, newdata = train)
+rmsle(train_preds, train$count)
+```
