@@ -1,0 +1,222 @@
+---
+title: "Tuning"
+author: "Brooke Anderson"
+date: "February 25, 2016"
+output: pdf_document
+---
+
+```{r message = FALSE}
+knitr::opts_knit$set(root.dir = "..") # Reset root directory for analysis
+library(lubridate) # To help handle dates
+library(dplyr) # Data wrangling
+library(ggplot2) # Plotting
+library(gridExtra) # To arrange multiple ggplot objects in one graph
+library(caret) # machine learning
+library(rpart.plot) # prettier tree plot
+library(splines) # fitting splines
+library(randomForest) # for variable importance plot
+```
+
+Read in and clean up the data:
+
+```{r}
+train <- read.csv("data/train.csv", as.is = TRUE) # `as.is` so `datetime` comes in as
+                                                  # character, not factor
+test <- read.csv("data/test.csv", as.is = TRUE)
+
+train <- mutate(train,
+                datetime = ymd_hms(datetime),
+                year = factor(year(datetime)),
+                hour = factor(hour(datetime)),
+                month = month(datetime),
+                yday = yday(datetime),
+                weather = factor(weather, levels = c(1, 2, 3, 4),
+                                 labels = c("Clear", "Mist", "Light Precip",
+                                            "Heavy Precip")),
+                season = factor(season, levels = c(1, 2, 3, 4),
+                                labels = c("Spring", "Summer", "Fall", "Winter")),
+                workingday = factor(workingday, levels = c(0, 1),
+                                    labels = c("Holiday / weekend",
+                                               "Working day")))
+test  <- mutate(test,
+                datetime = ymd_hms(datetime),
+                year = factor(year(datetime)),
+                hour = factor(hour(datetime)),
+                month = month(datetime),
+                yday = yday(datetime),
+                weather = factor(weather, levels = c(1, 2, 3, 4),
+                                 labels = c("Clear", "Mist", "Light Precip",
+                                            "Heavy Precip")),
+                season = factor(season, levels = c(1, 2, 3, 4),
+                                labels = c("Spring", "Summer", "Fall", "Winter")),
+                workingday = factor(workingday, levels = c(0, 1),
+                                    labels = c("Holiday / weekend",
+                                               "Working day")))
+```
+
+## Tuning
+
+```{r}
+rmsle_fun <- function(data, lev = NULL, model = NULL, ...){
+  log_p_1 <- log(data$pred + 1)
+  log_a_1 <- log(data$obs + 1)
+  sle <- (log_p_1 - log_a_1)^2
+  rmsle <- sqrt(mean(sle))
+  names(rmsle) <- "rmsle"
+  return(rmsle)
+}
+
+fitControl <- trainControl(method = "cv",
+                           number = 5,
+                           ## Evaluate performance using 
+                           ## the following function
+                           summaryFunction = rmsle_fun)
+```
+
+## Tuning a k-NN model
+
+```{r cache = TRUE}
+set.seed(825)
+mod_1 <- train(count ~ temp + hour + workingday + year, data = train,
+               method = "knn",
+               trControl = fitControl,
+               metric = "rmsle",
+               maximize = FALSE,
+               preProcess = c("center", "scale", "spatialSign"),
+               tuneLength = 5)
+mod_1
+```
+
+```{r fig.width = 6, fig.height = 4}
+plot(mod_1)
+```
+
+Check how the model did in the training data and on Kaggle: 
+
+```{r}
+rmsle <- function(train_preds, actual_preds){
+  log_p_1 <- log(train_preds + 1)
+  log_a_1 <- log(actual_preds + 1)
+  sle <- (log_p_1 - log_a_1)^2
+  rmsle <- sqrt(mean(sle))
+  return(rmsle)
+}
+
+write_test_preds <- function(test_preds, mod_name){
+  out_file <- data.frame(datetime = as.character(test$datetime),
+                         count = test_preds)
+  out_name <- paste0("test_predictions/", mod_name, ".csv")
+  write.csv(out_file, file = out_name, row.names = FALSE)
+}
+```
+
+```{r}
+train_preds <- predict(mod_1, newdata = train)
+rmsle(train_preds, train$count)
+
+test_preds <- predict(mod_1, newdata = test)
+write_test_preds(test_preds, "knn_tuned")
+```
+
+On Kaggle, this got 0.48618.
+
+## Fitting one of the GLMs using RMSLE as loss function
+
+```{r cache = TRUE}
+mod_4 <- train(count ~ year*hour*workingday*season + 
+               weather + ns(temp, knots = c(30, 35)),
+             data = train, family = quasipoisson, 
+               method = "glm",
+               trControl = fitControl,
+               metric = "rmsle",
+               maximize = FALSE)
+mod_4
+```
+
+Check how the model did in the training data and on Kaggle: 
+
+```{r}
+train_preds <- predict(mod_4, newdata = train)
+rmsle(train_preds, train$count)
+
+test_preds <- predict(mod_4, newdata = test)
+write_test_preds(test_preds, "glm_rmsle")
+```
+
+On Kaggle, this got 0.41048. This is exactly the same as I got for this model when I fit it without using `caret`. 
+
+## Tuning a regression tree model
+
+```{r cache = TRUE}
+set.seed(825)
+mod_2 <- train(count ~ season + holiday + workingday + weather + 
+                 temp + atemp + humidity + windspeed + year + hour + 
+                 month + yday, data = train,
+               method = "rpart2",
+               trControl = fitControl,
+               metric = "rmsle",
+               maximize = FALSE,
+               tuneLength = 12)
+mod_2
+```
+
+```{r fig.width = 5, fig.height = 3}
+plot(mod_2)
+```
+
+Plot the tree using the `prp` function from the `rpart.plot` package to make a prettier tree.
+
+```{r fig.width = 7, fig.height = 4}
+prp(mod_2$finalModel)
+```
+
+Check how the model did in the training data and on Kaggle: 
+
+```{r}
+train_preds <- predict(mod_2, newdata = train)
+rmsle(train_preds, train$count)
+
+test_preds <- predict(mod_2, newdata = test)
+write_test_preds(test_preds, "tree_tuned")
+```
+
+On Kaggle, this got 1.29878. 
+
+## Tuning a random forest model
+
+```{r cache = TRUE}
+set.seed(825)
+mod_3 <- train(count ~ season + holiday + workingday + weather + 
+                 temp + atemp + humidity + windspeed + year + hour + 
+                 month + yday,
+               data = train,
+               method = "rf",
+               ntree = 10,
+               importance = TRUE,
+               trControl = fitControl,
+               metric = "rmsle",
+               maximize = FALSE,
+               tuneLength = 5)
+mod_3
+```
+
+```{r fig.width = 5, fig.height = 3}
+plot(mod_3)
+```
+
+```{r fig.width = 5, fig.height = 7}
+varImpPlot(mod_3$finalModel, type = 1)
+```
+
+Check how the model did in the training data and on Kaggle: 
+
+```{r}
+train_preds <- predict(mod_3, newdata = train)
+rmsle(train_preds, train$count)
+
+test_preds <- predict(mod_3, newdata = test)
+write_test_preds(test_preds, "rf_tuned")
+```
+
+On Kaggle, this got 0.63338. 
+
