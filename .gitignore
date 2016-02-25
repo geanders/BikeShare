@@ -3,3 +3,5 @@
 .RData
 data/*
 figures/*
+ExampleAnalysis/*_cache/*
+ExampleAnalysis/*_files/*
