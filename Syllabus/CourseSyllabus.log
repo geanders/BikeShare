@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.14159265-2.6-1.40.16 (TeX Live 2015) (preloaded format=pdflatex 2015.5.24)  18 FEB 2016 13:07
+This is pdfTeX, Version 3.14159265-2.6-1.40.16 (TeX Live 2015) (preloaded format=pdflatex 2015.5.24)  28 FEB 2016 18:41
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -319,39 +319,43 @@ demand$
  []
 
 [3]
-Overfull \hbox (51.9094pt too wide) in paragraph at lines 203--207
+Overfull \hbox (51.9094pt too wide) in paragraph at lines 203--211
 \OT1/ptm/m/it/10.95 Competition: \OT1/ptm/m/n/10.95 Kag-gle: Bike shar-ing de-m
 and: $\OT1/pcr/m/n/10.95 https : / / www . kaggle . com / c / bike-[]sharing-[]
 demand$ 
  []
 
 
-Overfull \hbox (51.9094pt too wide) in paragraph at lines 208--212
+Overfull \hbox (51.9094pt too wide) in paragraph at lines 212--216
 \OT1/ptm/m/it/10.95 Competition: \OT1/ptm/m/n/10.95 Kag-gle: Bike shar-ing de-m
 and: $\OT1/pcr/m/n/10.95 https : / / www . kaggle . com / c / bike-[]sharing-[]
 demand$ 
  []
 
 
-Overfull \hbox (51.9094pt too wide) in paragraph at lines 213--218
+Overfull \hbox (51.9094pt too wide) in paragraph at lines 217--222
 \OT1/ptm/m/it/10.95 Competition: \OT1/ptm/m/n/10.95 Kag-gle: Bike shar-ing de-m
 and: $\OT1/pcr/m/n/10.95 https : / / www . kaggle . com / c / bike-[]sharing-[]
 demand$ 
  []
 
 
-Overfull \hbox (51.9094pt too wide) in paragraph at lines 219--225
+Overfull \hbox (51.9094pt too wide) in paragraph at lines 223--229
 \OT1/ptm/m/it/10.95 Competition: \OT1/ptm/m/n/10.95 Kag-gle: Bike shar-ing de-m
 and: $\OT1/pcr/m/n/10.95 https : / / www . kaggle . com / c / bike-[]sharing-[]
 demand$ 
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 219--225
+Underfull \hbox (badness 10000) in paragraph at lines 223--229
 
  []
 
-[4] (./CourseSyllabus.aux) ) 
+
+Underfull \vbox (badness 10000) has occurred while \output is active []
+
+ [4]
+(./CourseSyllabus.aux) ) 
 Here is how much of TeX's memory you used:
  3271 strings out of 493089
  43672 string characters out of 6134842
@@ -360,13 +364,13 @@ Here is how much of TeX's memory you used:
  17980 words of font info for 52 fonts, out of 8000000 for 9000
  1302 hyphenation exceptions out of 8191
  37i,4n,32p,1046b,233s stack positions out of 5000i,500n,10000p,200000b,80000s
-{/usr/local/texlive/2015/texmf-dist/fonts/enc/dvips
-/base/8r.enc}</usr/local/texlive/2015/texmf-dist/fonts/type1/public/amsfonts/cm
-/cmsy10.pfb></usr/local/texlive/2015/texmf-dist/fonts/type1/urw/courier/ucrr8a.
-pfb></usr/local/texlive/2015/texmf-dist/fonts/type1/urw/times/utmb8a.pfb></usr/
-local/texlive/2015/texmf-dist/fonts/type1/urw/times/utmr8a.pfb></usr/local/texl
-ive/2015/texmf-dist/fonts/type1/urw/times/utmri8a.pfb>
-Output written on CourseSyllabus.pdf (4 pages, 115538 bytes).
+{/usr/local/texlive/2015/texmf-dist/fonts/enc/dvips/bas
+e/8r.enc}</usr/local/texlive/2015/texmf-dist/fonts/type1/public/amsfonts/cm/cms
+y10.pfb></usr/local/texlive/2015/texmf-dist/fonts/type1/urw/courier/ucrr8a.pfb>
+</usr/local/texlive/2015/texmf-dist/fonts/type1/urw/times/utmb8a.pfb></usr/loca
+l/texlive/2015/texmf-dist/fonts/type1/urw/times/utmr8a.pfb></usr/local/texlive/
+2015/texmf-dist/fonts/type1/urw/times/utmri8a.pfb>
+Output written on CourseSyllabus.pdf (4 pages, 116439 bytes).
 PDF statistics:
  39 PDF objects out of 1000 (max. 8388607)
  26 compressed objects within 1 object stream
