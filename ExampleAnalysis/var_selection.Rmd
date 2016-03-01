@@ -9,6 +9,7 @@ output: pdf_document
 knitr::opts_knit$set(root.dir = "..") # Reset root directory for analysis
 library(lubridate) # To help handle dates
 library(dplyr) # Data wrangling
+library(tidyr) # Data wrangling
 library(ggplot2) # Plotting
 ```
 
@@ -33,46 +34,91 @@ train <- mutate(train,
                 workingday = factor(workingday, levels = c(0, 1),
                                     labels = c("Holiday / weekend",
                                                "Working day")))
-test  <- mutate(test,
-                datetime = ymd_hms(datetime),
-                year = factor(year(datetime)),
-                hour = factor(hour(datetime)),
-                month = month(datetime),
-                yday = yday(datetime),
-                weather = factor(weather, levels = c(1, 2, 3, 4),
-                                 labels = c("Clear", "Mist", "Light Precip",
-                                            "Heavy Precip")),
-                season = factor(season, levels = c(1, 2, 3, 4),
-                                labels = c("Spring", "Summer", "Fall", "Winter")),
-                workingday = factor(workingday, levels = c(0, 1),
-                                    labels = c("Holiday / weekend",
-                                               "Working day")))
 ```
 
 Add some derived variables related to weather and temperature, using `dplyr` for data wrangling ([here's a good cheatsheet](http://www.rstudio.com/wp-content/uploads/2015/02/data-wrangling-cheatsheet.pdf)).
 
-First, create some lagged variables for `temp` and `weather`:
+First, create some lagged variables for `temp` and `weather`. Because there are breaks in the time series, we need to group everything by continuous time groups before doing that lagging. Otherwise, you would end up with a case where you're saying that the temperature the last hour was really the last hour of a day several days ago, before a gap in the time series. This code isn't terribly elegant, but it's one way to get those groups, so that every `time_group` is limited to values that are continuous by hour:
 
 ```{r}
 train <- mutate(train,
-                temp1 = lag(temp, 1),
-                temp2 = lag(temp, 2),
-                temp3 = lag(temp, 3),
-                temp4 = lag(temp, 4),
-                temp5 = lag(temp, 5),
-                weather1 = lag(weather, 1),
-                weather2 = lag(weather, 2),
-                weather3 = lag(weather, 3),
-                weather4 = lag(weather, 4),
-                weather5 = lag(weather, 5))
+                time_diff = difftime(datetime, lag(datetime)))
+train$time_group <- NA
+group_num <- 1
+for(i in 1:nrow(train)){
+  if(!is.na(train$time_diff[i]) & train$time_diff[i] > dhours(1)){
+    group_num <- group_num + 1
+  }
+  train$time_group[i] <- group_num
+}
+```
+
+```{r}
+ggplot(train, aes(x = datetime, y = time_group)) + 
+  geom_point(size = 0.2) + 
+  theme_minimal()
+```
+
+Then you can group by this new variable before you do lags. 
+
+```{r}
+train <- group_by(train, time_group) %>% 
+  mutate(temp1 = lag(temp, 1),
+         temp2 = lag(temp, 2),
+         temp3 = lag(temp, 3),
+         temp4 = lag(temp, 4),
+         temp5 = lag(temp, 5),
+         weather1 = lag(weather, 1),
+         weather2 = lag(weather, 2),
+         weather3 = lag(weather, 3),
+         weather4 = lag(weather, 4),
+         weather5 = lag(weather, 5)) %>%
+  ungroup() %>%
+  select(-time_diff)
+```
+
+You can see that there are missing values for these lagged variables, because every time you get to a new time group, you won't be able to get lags that reach before the first hour in the time group: 
+
+```{r}
+rename(train,
+       temp0 = temp) %>%
+  select(starts_with("temp")) %>%
+  gather("lag", "temp") %>%
+  mutate(lag = sub("temp", "", lag)) %>%
+  group_by(lag) %>%
+  summarize(num_missing = sum(is.na(temp)))
+```
+
+Here are the correlations between different lags: 
+
+```{r}
+round(cor(select(train, starts_with("temp")), use = "complete.obs"), 2)
+```
+
+These are all really strongly correlated. I'm not sure if you'll gain much from the new variables, since they're all kind of saying the same thing.
+
+```{r warning = FALSE}
+to_plot <- select(train, count, starts_with("temp")) %>%
+  gather( "lag", "temperature", -count)
+ggplot(to_plot, aes(x = temperature, y = count)) + 
+  geom_point(alpha = 0.1, size = 0.1) + 
+  geom_smooth() + 
+  facet_wrap(~ lag) + 
+  theme_minimal()
 ```
 
 Next, create some variables by day. For example, was there one or more hours of bad weather during the day? You can get these by grouping by day (`group_by`), using `mutate` to calculate the by-day summary, and then ungrouping (`ungroup`).
 
 ```{r}
-train <- group_by(train, format(datetime, "%Y%m%d")) %>%
+train <- mutate(train, day = format(datetime, "%Y%m%d")) %>%
+  group_by(day) %>%
   mutate(mean_daily_temp = mean(temp),
-         morning_temp = mean(temp[hour %in% c("6", "7", "8")])) %>%
+         morning = hour %in% c("6", "7", "8"),
+         morning_temp = mean(temp[morning]),
+         hours_bad_weather = sum(weather != "Clear"),
+         any_bad_weather = ifelse(hours_bad_weather > 0, 1, 0),
+         morning_bad_weather = ifelse(sum(weather[morning] != "Clear") > 0, 1, 0)) %>%
+  select(-morning) %>%
   ungroup()
 ```
 
@@ -83,4 +129,104 @@ ggplot(train[1:(4*24), ], aes(x = datetime, y = morning_temp)) +
   geom_line() + 
   theme_minimal()
 ```
+
+```{r}
+train$weather[1:24]
+train$hours_bad_weather[1:24]
+```
+
+```{r}
+ggplot(train, aes(x = hour, y = count)) + 
+  geom_boxplot(outlier.shape = NA) + 
+  geom_jitter(width = 0.5, height = 0, alpha = 0.1, size = 0.2) + 
+  facet_grid(workingday ~ morning_bad_weather) + 
+  theme_minimal()
+```
+
+Add in interactions:
+
+```{r}
+train_groups <- sample(unique(train$time_group),
+                         size = length(unique(train$time_group)) / 2)
+my_train_split <- train$time_group %in% train_groups
+
+my_train <- filter(train, my_train_split) %>%
+  select(-casual, -registered, -datetime, -day) 
+```
+
+
+The dataframe now has `r ncol(my_train)` predictors.
+
+
+# Forward stepwise selection
+
+Since this dataset now has a lot of predictors, and a lot of these are strongly correlated, I'll try using forward (rather than backward) stepwise selection. 
+
+```{r}
+library(leaps) # For variable selection
+regfit_for <- regsubsets(count ~ season * workingday * hour * year + 
+                           holiday + weather + temp + atemp + 
+                           humidity + windspeed + month + yday + 
+                           temp1 + temp2 + temp3 + temp4 + temp5 + 
+                           weather1 + weather2 + weather3 + weather4 + 
+                           weather5 + mean_daily_temp + morning_temp + 
+                           hours_bad_weather + any_bad_weather + 
+                           morning_bad_weather,
+                         data = my_train,
+                         method = "forward", nvmax = 100)
+names(coef(regfit_for, 10))
+```
+
+```{r}
+my_test <- filter(train, !my_train_split) %>%
+  select(-casual, -registered, -datetime, -day) 
+test_mat <- model.matrix(count ~ season * workingday * hour * year + 
+                           holiday + weather + temp + atemp + 
+                           humidity + windspeed + month + yday + 
+                           temp1 + temp2 + temp3 + temp4 + temp5 + 
+                           weather1 + weather2 + weather3 + weather4 + 
+                           weather5 + mean_daily_temp + morning_temp + 
+                           hours_bad_weather + any_bad_weather + 
+                           morning_bad_weather,
+                         data = my_test)
+
+rmsle <- function(train_preds, actual_preds){
+  log_p_1 <- log(train_preds + 1)
+  log_a_1 <- log(actual_preds + 1)
+  sle <- (log_p_1 - log_a_1)^2
+  rmsle <- sqrt(mean(sle))
+  return(rmsle)
+}
+
+val_errors <- rep(NA, 100)
+val_rmsle <- rep(NA, 100)
+for(i in 1:100){
+  coef_i <- coef(regfit_for, id = i)
+  pred <- test_mat[ , names(coef_i)] %*% coef_i
+  pred[pred < 0] <- 0
+  val_errors[i] <- mean((my_test$count[complete.cases(my_test)] -
+                           pred)^2)
+  val_rmsle[i] <- rmsle(pred, my_test$count[complete.cases(my_test)])
+}
+```
+
+```{r}
+to_plot <- data.frame(i = 1:100,
+                      val_errors = val_errors,
+                      val_rmsle = val_rmsle)
+(min_error <- to_plot[which.min(to_plot$val_error), ])
+(min_rmsle <- to_plot[which.min(to_plot$val_rmsle), ])
+
+ggplot(to_plot, aes(x = i, y = val_errors)) + 
+  geom_line() + 
+  theme_minimal() + 
+  geom_point(data = min_error, color = "red")
+
+ggplot(to_plot, aes(x = i, y = val_rmsle)) + 
+  geom_line() + 
+  theme_minimal() + 
+  geom_point(data = min_rmsle, color = "red")
+```
+
+
 

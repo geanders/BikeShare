@@ -1,0 +1,300 @@
+---
+title: "Feature Engineering and Variable Selection"
+author: "Brooke Anderson"
+date: "March 1, 2016"
+font-size: 8pt
+output: beamer_presentation
+---
+
+```{r message = FALSE, echo = FALSE}
+knitr::opts_knit$set(root.dir = "..") # Reset root directory for analysis
+library(lubridate) # To help handle dates
+library(dplyr) # Data wrangling
+library(tidyr) # Data wrangling
+library(ggplot2) # Plotting
+```
+
+```{r echo = FALSE}
+train <- read.csv("data/train.csv", as.is = TRUE) # `as.is` so `datetime` comes in as
+                                                  # character, not factor
+test <- read.csv("data/test.csv", as.is = TRUE)
+
+train <- mutate(train,
+                datetime = ymd_hms(datetime),
+                year = factor(year(datetime)),
+                hour = factor(hour(datetime)),
+                month = month(datetime),
+                yday = yday(datetime),
+                weather = factor(weather, levels = c(1, 2, 3, 4),
+                                 labels = c("Clear", "Mist", "Light Precip",
+                                            "Heavy Precip")),
+                season = factor(season, levels = c(1, 2, 3, 4),
+                                labels = c("Spring", "Summer", "Fall", "Winter")),
+                workingday = factor(workingday, levels = c(0, 1),
+                                    labels = c("Holiday / weekend",
+                                               "Working day")))
+```
+
+# Data wrangling
+
+This feature engineering took some data wrangling. For that, I found the packages `dplyr`, `tidyr`, and `lubridate` very helpful. You might want to check out [RStudio's Data Wrangling Cheatsheet](http://www.rstudio.com/wp-content/uploads/2015/02/data-wrangling-cheatsheet.pdf).
+
+# Lagged weather variables
+
+There are breaks in the time series, so you need to group everything by continuous time groups before doing that lagging. Otherwise, you would end up with a case where you're saying that the temperature the last hour was really the last hour of a day several days ago, before a gap in the time series. 
+
+#  Lagged weather variables
+
+This code isn't terribly elegant, but it's one way to get those groups (`time_group`). First, calculate the difference between each `datetime` and that for the previous observation: 
+
+```{r}
+train <- mutate(train,
+                time_diff = difftime(datetime,
+                                     lag(datetime)),
+                time_group = NA)
+```
+
+#  Lagged weather variables
+
+Then loop through and assign `time_group` numbers. Everytime you hit an observation over an hour after the last one, increment the `group_num`:
+
+```{r}
+group_num <- 1
+for(i in 1:nrow(train)){
+  if(train$time_diff[i] > dhours(1) & 
+     !is.na(train$time_diff[i])){
+    group_num <- group_num + 1
+  }
+  train$time_group[i] <- group_num
+}
+```
+
+#  Lagged weather variables
+
+```{r echo = FALSE}
+ggplot(train, aes(x = datetime, y = time_group)) + 
+  geom_point(size = 0.2) + 
+  theme_minimal()
+```
+
+#  Lagged weather variables
+
+Then group by this new variable before you do lagged weather values: 
+
+```{r}
+train <- group_by(train, time_group) %>% 
+  mutate(temp1 = lag(temp, 1),
+         temp2 = lag(temp, 2),
+         temp3 = lag(temp, 3),
+         temp4 = lag(temp, 4),
+         temp5 = lag(temp, 5),
+         weather1 = lag(weather, 1),
+         weather2 = lag(weather, 2),
+         weather3 = lag(weather, 3),
+         weather4 = lag(weather, 4),
+         weather5 = lag(weather, 5)) %>%
+  ungroup() %>%
+  select(-time_diff)
+```
+
+#  Lagged weather variables
+
+There are missing values for these lagged variables (you can't get lags that reach before the first hour in the time group): 
+
+```{r echo = FALSE}
+rename(train,
+       temp0 = temp) %>%
+  select(starts_with("temp")) %>%
+  gather("lag", "temp") %>%
+  mutate(lag = sub("temp", "", lag)) %>%
+  group_by(lag) %>%
+  summarize(num_missing = sum(is.na(temp)))
+```
+
+# Lagged weather variables
+
+Correlations between lagged temperature variables:
+
+```{r echo = FALSE}
+round(cor(select(train, starts_with("temp")),
+          use = "complete.obs"), 2)
+```
+
+# Lagged weather variables
+
+```{r warning = FALSE, echo = FALSE}
+to_plot <- select(train, count, starts_with("temp")) %>%
+  gather( "lag", "temperature", -count)
+ggplot(to_plot, aes(x = temperature, y = count)) + 
+  geom_point(alpha = 0.1, size = 0.1) + 
+  geom_smooth() + 
+  facet_wrap(~ lag) + 
+  theme_minimal()
+```
+
+# By-day variables
+
+Next, create some variables by day. For example, was there one or more hours of bad weather during the day? 
+
+# By-day variables
+
+```{r}
+train <- mutate(train,
+                day = format(datetime, "%Y%m%d")) %>%
+  group_by(day) %>%
+  mutate(mean_daily_temp = mean(temp),
+         morning = hour %in% c("6", "7", "8"),
+         morning_temp = mean(temp[morning]),
+         hours_bad_weather = sum(weather != "Clear"),
+         any_bad_weather = hours_bad_weather > 0, 
+         morning_bad_weather = sum(weather[morning] !=
+                                     "Clear") > 0) %>%
+  select(-morning) %>%
+  ungroup()
+```
+
+# By-day variables
+
+You can see that these values are constant within a day: 
+
+```{r echo = FALSE}
+ggplot(train[1:(4*24), ], aes(x = datetime, y = morning_temp)) + 
+  geom_line() + 
+  theme_minimal()
+```
+
+# By-day variables
+
+```{r echo = FALSE}
+ggplot(train, aes(x = hour, y = count)) + 
+  geom_boxplot(outlier.shape = NA) + 
+  geom_jitter(width = 0.5, height = 0, alpha = 0.1, size = 0.2) + 
+  facet_grid(workingday ~ morning_bad_weather) + 
+  theme_minimal()
+```
+
+# Feature creation
+
+The dataframe now has `r ncol(train)` predictors (although many of these are very correlated with each other). Once you add in all the interactions, it will have even (a lot) more. 
+
+# Creating test and validation sets
+
+Split your training data into test and validation sets, stratifying by time group:
+
+```{r}
+sample_size <- length(unique(train$time_group)) * (2 / 3)
+train_groups <- sample(unique(train$time_group),
+                         size = sample_size)
+my_train_split <- train$time_group %in% train_groups
+
+my_train <- filter(train, my_train_split) %>%
+  select(-casual, -registered, -datetime, -day) 
+my_test <- filter(train, !my_train_split) %>%
+  select(-casual, -registered, -datetime, -day) 
+```
+
+# Forward stepwise selection
+
+```{r message = FALSE, warning = FALSE, results='hide'}
+library(leaps) # For variable selection
+regfit_for <- regsubsets(count ~ season * workingday * 
+                           hour * year + 
+                           holiday + weather + temp +
+                           atemp + humidity + windspeed + 
+                           month + yday + temp1 + temp2 +
+                           temp3 + temp4 + temp5 +
+                           weather1 + weather2 + 
+                           weather3 + weather4 + 
+                           weather5 + mean_daily_temp + 
+                           morning_temp + 
+                           hours_bad_weather + 
+                           any_bad_weather + 
+                           morning_bad_weather,
+                         data = my_train,
+                         method = "forward", nvmax = 418)
+```
+
+# Forward stepwise selection
+
+Here are the first ten predictors from that process:
+
+```{r}
+names(coef(regfit_for, 10))
+```
+
+# Test on validation set
+
+To pick the best number of variables, test the models on the validation set. First, create a model matrix for the test data: 
+
+```{r}
+test_mat <- model.matrix(count ~ season * workingday * 
+                           hour * year + 
+                           holiday + weather + temp +
+                           atemp + humidity + windspeed + 
+                           month + yday + temp1 + temp2 +
+                           temp3 + temp4 + temp5 +
+                           weather1 + weather2 + 
+                           weather3 + weather4 + 
+                           weather5 + mean_daily_temp + 
+                           morning_temp + 
+                           hours_bad_weather + 
+                           any_bad_weather + 
+                           morning_bad_weather,
+                         data = my_test)
+```
+
+# Test on validation set
+
+```{r echo = FALSE}
+rmsle <- function(train_preds, actual_preds){
+  log_p_1 <- log(train_preds + 1)
+  log_a_1 <- log(actual_preds + 1)
+  sle <- (log_p_1 - log_a_1)^2
+  rmsle <- sqrt(mean(sle))
+  return(rmsle)
+}
+```
+
+Then test on the validation test set: 
+
+```{r}
+val_errors <- rep(NA, 418)
+val_rmsle <- rep(NA, 418)
+actual <- my_test$count[complete.cases(my_test)]
+for(i in 1:418){
+  coef_i <- coef(regfit_for, id = i)
+  pred <- test_mat[ , names(coef_i)] %*% coef_i
+  pred[pred < 0] <- 0
+  val_errors[i] <- mean((actual - pred)^2)
+  val_rmsle[i] <- rmsle(pred, actual)
+}
+```
+
+# Test on validation set
+
+```{r echo = FALSE}
+to_plot <- data.frame(i = 1:418,
+                      val_errors = val_errors,
+                      val_rmsle = val_rmsle)
+min_error <- to_plot[which.min(to_plot$val_error), ]
+min_rmsle <- to_plot[which.min(to_plot$val_rmsle), ]
+```
+
+```{r echo = FALSE}
+ggplot(to_plot, aes(x = i, y = val_errors)) + 
+  geom_line() + 
+  theme_minimal() + 
+  geom_point(data = min_error, color = "red")
+```
+
+# Test on validation set
+
+```{r echo = FALSE}
+ggplot(to_plot, aes(x = i, y = val_rmsle)) + 
+  geom_line() + 
+  theme_minimal() + 
+  geom_point(data = min_rmsle, color = "red")
+```
+
+
+
