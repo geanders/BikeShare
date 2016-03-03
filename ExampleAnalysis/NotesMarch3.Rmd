@@ -1,0 +1,308 @@
+---
+title: "Lasso"
+author: "Brooke Anderson"
+date: "March 3, 2016"
+fontsize: 10pt
+output: beamer_presentation
+---
+
+```{r message = FALSE, echo = FALSE}
+knitr::opts_knit$set(root.dir = "..") # Reset root directory for analysis
+library(lubridate) # To help handle dates
+library(dplyr) # Data wrangling
+library(tidyr) # Data wrangling
+library(ggplot2) # Plotting
+library(caret) # machine learning
+```
+
+```{r, echo = FALSE}
+train <- read.csv("data/train.csv", as.is = TRUE) # `as.is` so `datetime` comes in as
+                                                  # character, not factor
+test <- read.csv("data/test.csv", as.is = TRUE)
+
+train <- mutate(train,
+                datetime = ymd_hms(datetime),
+                year = factor(year(datetime)),
+                hour = factor(hour(datetime)),
+                month = month(datetime),
+                yday = yday(datetime),
+                weather = factor(weather, levels = c(1, 2, 3, 4),
+                                 labels = c("Clear", "Mist", "Light Precip",
+                                            "Heavy Precip")),
+                season = factor(season, levels = c(1, 2, 3, 4),
+                                labels = c("Spring", "Summer", "Fall", "Winter")),
+                workingday = factor(workingday, levels = c(0, 1),
+                                    labels = c("Holiday / weekend",
+                                               "Working day")))
+
+test <- mutate(test,
+                datetime = ymd_hms(datetime),
+                year = factor(year(datetime)),
+                hour = factor(hour(datetime)),
+                month = month(datetime),
+                yday = yday(datetime),
+                weather = factor(weather, levels = c(1, 2, 3, 4),
+                                 labels = c("Clear", "Mist", "Light Precip",
+                                            "Heavy Precip")),
+                season = factor(season, levels = c(1, 2, 3, 4),
+                                labels = c("Spring", "Summer", "Fall", "Winter")),
+                workingday = factor(workingday, levels = c(0, 1),
+                                    labels = c("Holiday / weekend",
+                                               "Working day")))
+
+write_test_preds <- function(test_preds, mod_name){
+  out_file <- data.frame(datetime = as.character(test$datetime),
+                         count = test_preds)
+  out_name <- paste0("test_predictions/", mod_name, ".csv")
+  write.csv(out_file, file = out_name, row.names = FALSE)
+}
+```
+
+## Reminder-- best model to date
+
+Add spline with knots at high temperature-- on Kaggle: 0.41048.
+
+```{r eval = FALSE}
+mod_4 <- glm(count ~ year*hour*workingday*season + 
+               weather + 
+               ns(temp, knots = c(30, 35)),
+             data = train, family = quasipoisson)
+```
+
+# Lasso with `caret`
+
+`caret` lets you fit a lasso model with `glmnet`, which lets you: 
+
+- Optimize on both complexity parameter ($\lambda$) and elastic-net mixing parameter ($\alpha$)
+- Use RMSLE when tuning
+- Fit different flavors of GLM
+
+See [here](https://web.stanford.edu/~hastie/glmnet/glmnet_alpha.html) for more on `glmnet`.
+
+# Lasso with `caret`
+
+Elastic-net mixing parameter:
+
+$$
+\alpha = \begin{cases}
+0 & \text{ridge penalty}\\ 
+1 & \text{lasso penalty}
+\end{cases}
+$$
+
+# Non-zero variance predictors
+
+I was getting some warnings about non-zero variance predictors, so I found and removed them using `nearZeroVar`: 
+
+```{r}
+my_train <- select(train, -datetime, -registered,
+                   - casual)
+my_train <- model.matrix(count ~ year * season * 
+                           workingday * hour + 
+                           holiday + temp + atemp + 
+                           humidity + windspeed + 
+                           month + yday + weather,
+                         data = my_train)
+nzv <- nearZeroVar(my_train)
+my_train <- my_train[, -nzv]
+```
+
+# Non-zero variance predictors
+
+I need to do the same thing with the testing data (notice I'm using the `nzv` vector I measured from the training data, not doing a new one for the testing data): 
+
+```{r}
+my_test <- select(test, -datetime)
+my_test <- model.matrix( ~ 1 + year * season * 
+                           workingday * hour + 
+                           holiday + temp + atemp + 
+                           humidity + windspeed + 
+                           month + yday + weather,
+                         data = my_test)
+my_test <- my_test[, -nzv]
+```
+
+# Linear regression with `glmnet`
+
+```{r}
+rmsle_fun <- function(data, lev = NULL,
+                      model = NULL, ...){
+  data$pred[data$pred < 0] <- 0
+  log_p_1 <- log(data$pred + 1)
+  log_a_1 <- log(data$obs + 1)
+  sle <- (log_p_1 - log_a_1)^2
+  rmsle <- sqrt(mean(sle))
+  names(rmsle) <- "rmsle"
+  return(rmsle)
+}
+
+fitControl <- trainControl(method = "cv",
+                       number = 5,
+                       summaryFunction = rmsle_fun)
+```
+
+# Linear regression with `glmnet`
+
+```{r message = FALSE}
+mod_1 <- train(y = train$count,
+               x = my_train,
+               preProcess = c("center", "scale"),
+               method = "glmnet",
+               trControl = fitControl,
+               metric = "rmsle",
+               maximize = FALSE,
+               family = "gaussian",
+               tuneLength = 5)
+```
+
+# Linear regression with `glmnet` 
+
+```{r echo = FALSE}
+plot(mod_1)
+```
+
+# Linear regression with `glmnet` 
+
+```{r}
+rmsle <- function(train_preds, actual_preds){
+  train_preds[train_preds < 0] <- 0
+  log_p_1 <- log(train_preds + 1)
+  log_a_1 <- log(actual_preds + 1)
+  sle <- (log_p_1 - log_a_1)^2
+  rmsle <- sqrt(mean(sle))
+  return(rmsle)
+}
+
+train_preds <- predict(mod_1, newdata = my_train)
+train_preds[train_preds < 0] <- 0
+rmsle(train_preds, train$count)
+```
+
+# Linear regression with `glmnet` 
+
+```{r}
+test_preds <- predict(mod_1, newdata = my_test)
+test_preds[test_preds < 0] <- 0
+write_test_preds(test_preds,
+                 mod = "elastic_net_gaussian")
+```
+
+On Kaggle, this got 1.39085.
+
+# Linear regression with `glmnet` 
+
+```{r echo = FALSE}
+to_plot <- data.frame(actual = train$count, predicted = train_preds)
+ggplot(to_plot, aes(x = actual, y = predicted)) + 
+  geom_point(alpha = 0.1, size = 0.2) + 
+  geom_smooth() + 
+  theme_minimal() + 
+  geom_abline(intercept = 0, slope = 1, color = "red") + 
+  ylim(c(0, 1000))
+```
+
+# Poisson GLM with `glmnet`
+
+From [Hastie and Qian](https://web.stanford.edu/~hastie/glmnet/glmnet_alpha.html): \bigskip
+
+"The log-likelihood for observations $\{x_i,y_i\}_1^N$ is given by: 
+
+$$
+l(\beta|X,Y) = \sum_{i=1}^N (y_i (\beta_0 + \beta' x_i) - e^{\beta_0+\beta^Tx_i})
+$$ 
+
+# Poisson GLM with `glmnet`
+
+"As before, we optimize the penalized log-likelihood: 
+
+$$
+\min_{\beta_0,\beta} -\frac1N l(\beta|X, Y)  + \lambda \left((1-\alpha) \sum_{i=1}^N \beta_i^2/2) +\alpha \sum_{i=1}^N |\beta_i|\right)
+$$
+
+# Poisson GLM with `glmnet`
+
+"Glmnet uses an outer Newton loop, and an inner weighted least-squares loop (as in logistic regression) to optimize this criterion."
+
+# Poisson GLM with `glmnet`
+
+You need a new `rmsle_fun` function definition (notice you need to take the exponential of the predicted values): 
+
+```{r}
+rmsle_fun <- function(data, lev = NULL,
+                      model = NULL, ...){
+  log_p_1 <- log(exp(data$pred) + 1)
+  log_a_1 <- log(data$obs + 1)
+  sle <- (log_p_1 - log_a_1)^2
+  rmsle <- sqrt(mean(sle))
+  names(rmsle) <- "rmsle"
+  return(rmsle)
+}
+```
+
+# Poisson GLM with `glmnet`
+
+Then train the model: 
+
+```{r echo = FALSE}
+fitControl <- trainControl(method = "cv",
+                       number = 5,
+                       summaryFunction = rmsle_fun)
+```
+
+```{r message = FALSE}
+mod_2 <- train(y = train$count,
+               x = my_train,
+               preProcess = c("center", "scale"),
+               method = "glmnet",
+               trControl = fitControl,
+               metric = "rmsle",
+               maximize = FALSE,
+               family = "poisson",
+               tuneLength = 5)
+```
+
+# Poisson GLM with `glmnet`
+
+```{r echo = FALSE}
+plot(mod_2)
+```
+
+# Poisson GLM with `glmnet`
+
+```{r}
+rmsle <- function(train_preds, actual_preds){
+  log_p_1 <- log(train_preds + 1)
+  log_a_1 <- log(actual_preds + 1)
+  sle <- (log_p_1 - log_a_1)^2
+  rmsle <- sqrt(mean(sle))
+  return(rmsle)
+}
+
+train_preds <- predict(mod_2, newdata = my_train)
+train_preds <- exp(train_preds)
+rmsle(train_preds, train$count)
+```
+
+# Poisson GLM with `glmnet`
+
+```{r}
+test_preds <- predict(mod_2, newdata = my_test)
+test_preds <- exp(test_preds)
+write_test_preds(test_preds,
+                 mod = "elastic_net_poisson")
+```
+
+The score on Kaggle was 1.37032.
+
+# Poisson GLM with `glmnet`
+
+```{r echo = FALSE}
+to_plot <- data.frame(actual = train$count, predicted = train_preds)
+ggplot(to_plot, aes(x = actual, y = predicted)) + 
+  geom_point(alpha = 0.1, size = 0.2) + 
+  geom_smooth() + 
+  theme_minimal() + 
+  geom_abline(intercept = 0, slope = 1, color = "red") + 
+  ylim(c(0, 1000))
+```
+
