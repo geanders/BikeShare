@@ -1,0 +1,713 @@
+---
+title: "Non-linear models"
+author: "Brooke Anderson"
+date: "March 10, 2016"
+output: beamer_presentation
+---
+
+```{r warning = FALSE, message = FALSE, echo = FALSE}
+#knitr::opts_knit$set(root.dir = "..") # Reset root directory for analysis
+library(lubridate) # To help handle dates
+library(dplyr) # Data wrangling
+library(ggplot2) # Plotting
+library(gridExtra) # To arrange multiple ggplot objects in one graph
+library(splines) # To fit splines
+library(gam)
+library(caret)
+
+train <- read.csv("../data/train.csv", as.is = TRUE) # `as.is` so `datetime` comes in as
+                                                  # character, not factor
+test <- read.csv("../data/test.csv", as.is = TRUE)
+
+train <- mutate(train,
+                datetime = ymd_hms(datetime),
+                year = year(datetime),
+                hour = hour(datetime),
+                month = month(datetime),
+                yday = yday(datetime),
+                wday = factor(as.character(wday(datetime, label = TRUE))),
+                season = factor(season, levels = c(1, 2, 3, 4),
+                                labels = c("Spring", "Summer", "Fall", "Winter")),
+                workingday = factor(workingday, levels = c(0, 1),
+                                    labels = c("Holiday / weekend",
+                                               "Working day")))
+test  <- mutate(test,
+                datetime = ymd_hms(datetime),
+                year = year(datetime),
+                hour = hour(datetime),
+                month = month(datetime),
+                yday = yday(datetime),
+                wday = factor(as.character(wday(datetime, label = TRUE))),
+                season = factor(season, levels = c(1, 2, 3, 4),
+                                labels = c("Spring", "Summer", "Fall", "Winter")),
+                workingday = factor(workingday, levels = c(0, 1),
+                                    labels = c("Holiday / weekend",
+                                               "Working day")))
+
+rmsle <- function(train_preds, actual_preds){
+  log_p_1 <- log(train_preds + 1)
+  log_a_1 <- log(actual_preds + 1)
+  sle <- (log_p_1 - log_a_1)^2
+  rmsle <- sqrt(mean(sle))
+  return(rmsle)
+}
+
+write_test_preds <- function(test_preds, mod_name){
+  out_file <- data.frame(datetime = as.character(test$datetime),
+                         count = test_preds)
+  out_name <- paste0("../test_predictions/", mod_name, ".csv")
+  write.csv(out_file, file = out_name, row.names = FALSE)
+}
+```
+
+## Spline of hour
+
+```{r, fig.show = "hide"}
+ex_1 <- glm(count ~ ns(hour, 6), data = train,
+            family = quasipoisson)
+newdata <- data.frame(hour = 0:23)
+newdata$y_hat <- predict(ex_1, newdata = newdata,
+                         type = "response")
+
+ggplot(newdata, aes(x = hour, y = y_hat)) + 
+  geom_point(data = train, aes(x = hour, y = count),
+             alpha = 0.1) + 
+  geom_line(color = "red", size = 2) + 
+  theme_minimal()
+```
+
+## Spline of hour
+
+Degrees of freedom: 6
+
+```{r, echo = FALSE}
+ex_1 <- glm(count ~ ns(hour, 6), data = train,
+            family = quasipoisson)
+newdata <- data.frame(hour = 0:23)
+newdata$y_hat <- predict(ex_1, newdata = newdata,
+                         type = "response")
+
+ggplot(newdata, aes(x = hour, y = y_hat)) + 
+  geom_point(data = train, aes(x = hour, y = count),
+             alpha = 0.1) + 
+  geom_line(color = "red", size = 2) + 
+  theme_minimal()
+```
+
+## Spline of hour
+
+Degrees of freedom: 3
+
+```{r, echo = FALSE}
+ex_1 <- glm(count ~ ns(hour, 3), data = train,
+            family = quasipoisson)
+newdata <- data.frame(hour = 0:23)
+newdata$y_hat <- predict(ex_1, newdata = newdata,
+                         type = "response")
+
+ggplot(newdata, aes(x = hour, y = y_hat)) + 
+  geom_point(data = train, aes(x = hour, y = count),
+             alpha = 0.1) + 
+  geom_line(color = "red", size = 2) + 
+  theme_minimal()
+```
+
+## Spline of hour
+
+Degrees of freedom: 15
+
+```{r, echo = FALSE}
+ex_1 <- glm(count ~ ns(hour, 15), data = train,
+            family = quasipoisson)
+newdata <- data.frame(hour = 0:23)
+newdata$y_hat <- predict(ex_1, newdata = newdata,
+                         type = "response")
+
+ggplot(newdata, aes(x = hour, y = y_hat)) + 
+  geom_point(data = train, aes(x = hour, y = count),
+             alpha = 0.1) + 
+  geom_line(color = "red", size = 2) + 
+  theme_minimal()
+```
+
+## Spline of day of year
+
+```{r, fig.show = "hide"}
+ex_1 <- glm(count ~ ns(yday, 6), data = train,
+            family = quasipoisson)
+newdata <- data.frame(yday = 1:366)
+newdata$y_hat <- predict(ex_1, newdata = newdata,
+                         type = "response")
+
+ggplot(newdata, aes(x = yday, y = y_hat)) + 
+  geom_point(data = train, aes(x = yday, y = count),
+             alpha = 0.1) + 
+  geom_line(color = "red", size = 2) + 
+  theme_minimal()
+```
+
+## Spline of day of year
+
+Degrees of freedom: 6
+
+```{r, echo = FALSE}
+ex_1 <- glm(count ~ ns(yday, 6), data = train,
+            family = quasipoisson)
+newdata <- data.frame(yday = 1:366)
+newdata$y_hat <- predict(ex_1, newdata = newdata,
+                         type = "response")
+
+ggplot(newdata, aes(x = yday, y = y_hat)) + 
+  geom_point(data = train, aes(x = yday, y = count),
+             alpha = 0.1) + 
+  geom_line(color = "red", size = 2) + 
+  theme_minimal()
+```
+
+## Spline of day of year
+
+Degrees of freedom: 12
+
+```{r, echo = FALSE}
+ex_1 <- glm(count ~ ns(yday, 12), data = train,
+            family = quasipoisson)
+newdata <- data.frame(yday = 1:366)
+newdata$y_hat <- predict(ex_1, newdata = newdata,
+                         type = "response")
+
+ggplot(newdata, aes(x = yday, y = y_hat)) + 
+  geom_point(data = train, aes(x = yday, y = count),
+             alpha = 0.1) + 
+  geom_line(color = "red", size = 2) + 
+  theme_minimal()
+```
+
+## Model 
+
+On Kaggle: 0.77821.
+
+```{r}
+mod_1 <- glm(count ~ ns(hour, 12) + ns(yday, 6),
+             data = train, family = quasipoisson)
+
+train_preds <- predict(mod_1, type = "response")
+actual_preds <- train$count 
+rmsle(train_preds, actual_preds)
+
+test_preds <- predict(mod_1, newdata = test,
+                      type = "response")
+write_test_preds(test_preds, mod_name = "gam_1")
+```
+
+## Spline of hour
+
+```{r, fig.show = "hide"}
+ex_2 <- glm(count ~ workingday + ns(hour, 12),
+            data = train,
+            family = quasipoisson)
+newdata <- data.frame(hour = rep(0:23, 2),
+            workingday = rep(unique(train$workingday),
+                                       each = 24))
+newdata$y_hat <- predict(ex_2, newdata = newdata,
+                         type = "response")
+
+ggplot(newdata, aes(x = hour, y = y_hat)) + 
+  geom_point(data = train, aes(x = hour, y = count),
+             alpha = 0.1) + 
+  geom_line(color = "red", size = 2) + 
+  facet_wrap(~ workingday, ncol = 1) + 
+  theme_minimal()
+```
+
+## Spline of hour
+
+```{r, echo = FALSE}
+ex_2 <- glm(count ~ workingday + ns(hour, 12), data = train,
+            family = quasipoisson)
+newdata <- data.frame(hour = rep(0:23, 2),
+                      workingday = rep(unique(train$workingday),
+                                       each = 24))
+newdata$y_hat <- predict(ex_2, newdata = newdata,
+                         type = "response")
+
+ggplot(newdata, aes(x = hour, y = y_hat)) + 
+  geom_point(data = train, aes(x = hour, y = count),
+             alpha = 0.1) + 
+  geom_line(color = "red", size = 2) + 
+  facet_wrap(~ workingday, ncol = 1) + 
+  theme_minimal()
+```
+
+## Spline of hour
+
+```{r, fig.show = "hide"}
+ex_2 <- glm(count ~ workingday*ns(hour, 12),
+            data = train,
+            family = quasipoisson)
+newdata <- data.frame(hour = rep(0:23, 2),
+            workingday = rep(unique(train$workingday),
+                                       each = 24))
+newdata$y_hat <- predict(ex_2, newdata = newdata,
+                         type = "response")
+
+ggplot(newdata, aes(x = hour, y = y_hat)) + 
+  geom_point(data = train, aes(x = hour, y = count),
+             alpha = 0.1) + 
+  geom_line(color = "red", size = 2) + 
+  facet_wrap(~ workingday, ncol = 1) + 
+  theme_minimal()
+```
+
+## Spline of hour
+
+```{r, echo = FALSE}
+ex_2 <- glm(count ~ workingday*ns(hour, 12), data = train,
+            family = quasipoisson)
+newdata <- data.frame(hour = rep(0:23, 2),
+                      workingday = rep(unique(train$workingday),
+                                       each = 24))
+newdata$y_hat <- predict(ex_2, newdata = newdata,
+                         type = "response")
+
+ggplot(newdata, aes(x = hour, y = y_hat)) + 
+  geom_point(data = train, aes(x = hour, y = count),
+             alpha = 0.1) + 
+  geom_line(color = "red", size = 2) + 
+  facet_wrap(~ workingday, ncol = 1) + 
+  theme_minimal()
+```
+
+## Model 
+
+On Kaggle: 0.60629.
+
+```{r}
+mod_2 <- glm(count ~ workingday * ns(hour, 12) + 
+               ns(yday, 6),
+             data = train, family = quasipoisson)
+
+train_preds <- predict(mod_2, type = "response")
+actual_preds <- train$count 
+rmsle(train_preds, actual_preds)
+
+test_preds <- predict(mod_2, newdata = test,
+                      type = "response")
+write_test_preds(test_preds, mod_name = "gam_2")
+```
+
+## Spline of hour
+
+```{r}
+ex_3 <- glm(count ~ year + workingday*ns(hour, 12),
+            data = train,
+            family = quasipoisson)
+
+new_hour <- 0:23
+new_workingday <- levels(train$workingday)
+new_year <- unique(train$year)
+
+newdata <- expand.grid(new_hour, new_workingday, new_year)
+colnames(newdata) <- c("hour", "workingday", "year")
+head(newdata, 3)
+```
+
+## Spline of hour
+
+```{r fig.show = "hide"}
+newdata$y_hat <- predict(ex_3, newdata = newdata,
+                         type = "response")
+
+ggplot(newdata, aes(x = hour, y = y_hat)) + 
+  geom_point(data = train, aes(x = hour, y = count),
+             alpha = 0.1) + 
+  geom_line(color = "red", size = 2) + 
+  facet_grid(year~ workingday) + 
+  theme_minimal()
+```
+
+## Spline of hour
+
+```{r echo = FALSE}
+newdata$y_hat <- predict(ex_3, newdata = newdata,
+                         type = "response")
+
+ggplot(newdata, aes(x = hour, y = y_hat)) + 
+  geom_point(data = train, aes(x = hour, y = count),
+             alpha = 0.1) + 
+  geom_line(color = "red", size = 2) + 
+  facet_grid(year~ workingday) + 
+  theme_minimal()
+```
+
+## Spline of hour
+
+```{r}
+ex_4 <- glm(count ~ year*workingday*ns(hour, 12),
+            data = train,
+            family = quasipoisson)
+
+new_hour <- 0:23
+new_workingday <- levels(train$workingday)
+new_year <- unique(train$year)
+
+newdata <- expand.grid(new_hour, new_workingday, new_year)
+colnames(newdata) <- c("hour", "workingday", "year")
+
+newdata$y_hat <- predict(ex_4, newdata = newdata,
+                         type = "response")
+```
+
+## Spline of hour
+
+```{r echo = FALSE}
+ggplot(newdata, aes(x = hour, y = y_hat)) + 
+  geom_point(data = train, aes(x = hour, y = count),
+             alpha = 0.1) + 
+  geom_line(color = "red", size = 2) + 
+  facet_grid(year~ workingday) + 
+  theme_minimal()
+```
+
+## Model 
+
+On Kaggle: 0.54972.
+
+```{r}
+mod_3 <- glm(count ~ workingday * ns(hour, 12) + 
+               ns(yday, 6) + year,
+             data = train, family = quasipoisson)
+
+train_preds <- predict(mod_3, type = "response")
+actual_preds <- train$count 
+rmsle(train_preds, actual_preds)
+
+test_preds <- predict(mod_3, newdata = test,
+                      type = "response")
+write_test_preds(test_preds, mod_name = "gam_3")
+```
+
+## Spline of temperature
+
+```{r}
+ex_5 <- glm(count ~ ns(temp, 5),
+            data = train,
+            family = quasipoisson)
+
+newdata <- data.frame(temp = seq(from = 
+                                floor(min(train$temp)),
+                                 to = max(train$temp)))
+
+newdata$y_hat <- predict(ex_5, newdata = newdata,
+                         type = "response")
+```
+
+## Spline of temperature
+
+```{r echo = FALSE}
+ggplot(newdata, aes(x = temp, y = y_hat)) + 
+  geom_point(data = train, aes(x = temp, y = count),
+             alpha = 0.1) + 
+  geom_line(color = "red", size = 2) + 
+  theme_minimal()
+```
+
+## Spline of temperature
+
+Degrees of freedom: 10.
+
+```{r echo = FALSE}
+ex_5 <- glm(count ~ ns(temp, 10),
+            data = train,
+            family = quasipoisson)
+
+newdata <- data.frame(temp = floor(min(train$temp)):max(train$temp))
+
+newdata$y_hat <- predict(ex_5, newdata = newdata,
+                         type = "response")
+
+ggplot(newdata, aes(x = temp, y = y_hat)) + 
+  geom_point(data = train, aes(x = temp, y = count),
+             alpha = 0.1) + 
+  geom_line(color = "red", size = 2) + 
+  theme_minimal()
+```
+
+## Model 
+
+On Kaggle: 0.51936.
+
+```{r}
+mod_4 <- glm(count ~ workingday * ns(hour, 12) + 
+               ns(yday, 6) + year + 
+               ns(temp, 10),
+             data = train, family = quasipoisson)
+
+train_preds <- predict(mod_4, type = "response")
+actual_preds <- train$count 
+rmsle(train_preds, actual_preds)
+
+test_preds <- predict(mod_4, newdata = test,
+                      type = "response")
+write_test_preds(test_preds, mod_name = "gam_4")
+```
+
+## Model 
+
+On Kaggle: 0.46740.
+
+```{r}
+mod_5 <- glm(count ~ season * workingday * ns(hour, 12) + 
+               ns(yday, 6) + year + 
+               ns(temp, 10) + weather + wday +
+               ns(humidity, 5),
+             data = train, family = quasipoisson)
+
+train_preds <- predict(mod_5, type = "response")
+actual_preds <- train$count 
+rmsle(train_preds, actual_preds)
+
+test_preds <- predict(mod_5, newdata = test,
+                      type = "response")
+write_test_preds(test_preds, mod_name = "gam_5")
+```
+
+## Spline of hour
+
+```{r}
+ex_5a <- glm(registered ~ year*workingday*ns(hour, 12),
+            data = train,
+            family = quasipoisson)
+ex_5b <- glm(casual ~ year*workingday*ns(hour, 12),
+            data = train,
+            family = quasipoisson)
+
+new_hour <- 0:23
+new_workingday <- levels(train$workingday)
+new_year <- unique(train$year)
+```
+
+## Spline of hour
+
+```{r}
+newdata <- expand.grid(new_hour, new_workingday,
+                       new_year)
+colnames(newdata) <- c("hour", "workingday", "year")
+
+newdata$y_hat_registered <- predict(ex_5a,
+                                    newdata = newdata,
+                                    type = "response")
+newdata$y_hat_casual <- predict(ex_5b,
+                                newdata = newdata,
+                                type = "response")
+```
+
+## Spline of hour
+
+Registered: 
+
+```{r echo = FALSE}
+ggplot(newdata, aes(x = hour, y = y_hat_registered)) + 
+  geom_point(data = train, aes(x = hour, y = registered),
+             alpha = 0.1) + 
+  geom_line(color = "red", size = 2) + 
+  facet_grid(year~ workingday) + 
+  theme_minimal()
+```
+
+## Spline of hour
+
+Casual: 
+
+```{r echo = FALSE}
+ggplot(newdata, aes(x = hour, y = y_hat_casual)) + 
+  geom_point(data = train, aes(x = hour, y = casual),
+             alpha = 0.1) + 
+  geom_line(color = "red", size = 2) + 
+  facet_grid(year~ workingday) + 
+  theme_minimal()
+```
+
+## Model 
+
+```{r}
+mod_6a <- glm(registered ~ season * workingday * 
+                ns(hour, 12) + 
+               ns(yday, 6) + year + 
+               ns(temp, 10) + weather + wday +
+               ns(humidity, 5),
+             data = train, family = quasipoisson)
+mod_6b <- glm(casual ~ season * workingday * 
+                ns(hour, 12) + 
+               ns(yday, 6) + year + 
+               ns(temp, 10) + weather + wday +
+               ns(humidity, 5),
+             data = train, family = quasipoisson)
+```
+
+## Model 
+
+On Kaggle: 0.47690.
+
+```{r}
+train_predsa <- predict(mod_6a, type = "response")
+train_predsb <- predict(mod_6b, type = "response")
+train_preds <- train_predsa + train_predsb
+actual_preds <- train$count 
+rmsle(train_preds, actual_preds)
+
+test_predsa <- predict(mod_6a, newdata = test,
+                      type = "response")
+test_predsb <- predict(mod_6b, newdata = test,
+                      type = "response")
+test_preds <- test_predsa + test_predsb
+write_test_preds(test_preds, mod_name = "gam_6")
+```
+
+## K-nearest neighbors
+
+```{r echo = FALSE}
+rmsle_fun <- function(data, lev = NULL,
+                      model = NULL, ...){
+  log_p_1 <- log(data$pred + 1)
+  log_a_1 <- log(data$obs + 1)
+  sle <- (log_p_1 - log_a_1)^2
+  rmsle <- sqrt(mean(sle))
+  names(rmsle) <- "rmsle"
+  return(rmsle)
+}
+
+fitControl <- trainControl(method = "cv",
+                           number = 5,
+                           summaryFunction = rmsle_fun)
+```
+
+```{r}
+set.seed(825)
+mod_1 <- train(count ~ temp + hour + 
+                 workingday + year,
+               data = train,
+               method = "knn",
+               trControl = fitControl,
+               metric = "rmsle",
+               maximize = FALSE,
+               preProcess = c("center", "scale",
+                              "spatialSign"),
+               tuneLength = 5)
+
+train_preds <- predict(mod_1,
+                       newdata = train)
+rmsle(train_preds, train$count)
+```
+
+## K-nearest neighbors
+
+```{r}
+plot(mod_1)
+```
+
+## K-nearest neighbors
+
+On Kaggle: 0.49535.
+
+```{r}
+test_preds <- predict(mod_1, newdata = test)
+write_test_preds(test_preds, mod_name = "knn")
+```
+
+## K-nearest neighbors
+
+```{r}
+set.seed(825)
+mod_2 <- train(count ~ temp + factor(hour) + workingday + year,
+               data = train,
+               method = "knn",
+               trControl = fitControl,
+               metric = "rmsle",
+               maximize = FALSE,
+               preProcess = c("center", "scale",
+                              "spatialSign"),
+               tuneLength = 5)
+
+train_preds <- predict(mod_2, newdata = train)
+rmsle(train_preds, train$count)
+```
+
+## K-nearest neighbors
+
+```{r}
+plot(mod_2)
+```
+
+## K-nearest neighbors
+
+On Kaggle: 0.48618.
+
+```{r}
+test_preds <- predict(mod_2, newdata = test)
+write_test_preds(test_preds, mod_name = "knn2")
+```
+
+## SVM
+
+```{r echo = FALSE}
+rmsle_fun <- function(data, lev = NULL,
+                      model = NULL, ...){
+  log_p_1 <- log(exp(data$pred) + 1)
+  log_a_1 <- log(data$obs + 1)
+  sle <- (log_p_1 - log_a_1)^2
+  rmsle <- sqrt(mean(sle))
+  names(rmsle) <- "rmsle"
+  return(rmsle)
+}
+
+fitControl <- trainControl(method = "cv",
+                           number = 5,
+                           summaryFunction = rmsle_fun)
+```
+
+```{r message = FALSE, warning = FALSE}
+set.seed(825)
+mod_3 <- train(log(count) ~ temp + hour + 
+                 workingday + year,
+               data = train,
+               method = "svmRadial",
+               trControl = fitControl,
+               metric = "rmsle",
+               maximize = FALSE,
+               preProcess = c("center", "scale",
+                              "spatialSign"),
+               tuneLength = 5)
+
+train_preds <- exp(predict(mod_3,
+                           newdata = train))
+rmsle(train_preds, train$count)
+```
+
+## SVM
+
+On Kaggle: 0.77061.
+
+```{r}
+test_preds <- exp(predict(mod_3, newdata = test))
+write_test_preds(test_preds, mod_name = "svm")
+```
+
+
+```{r message = FALSE, warning = FALSE}
+set.seed(825)
+mod_4 <- train(log(count) ~ ns(temp, 10) + 
+                 ns(hour, 10) * workingday + year,
+               data = train,
+               method = "svmRadial",
+               trControl = fitControl,
+               metric = "rmsle",
+               maximize = FALSE,
+               preProcess = c("center", "scale",
+                              "spatialSign"),
+               tuneLength = 5)
+
+train_preds <- exp(predict(mod_4,
+                           newdata = train))
+rmsle(train_preds, train$count)
+```
+
