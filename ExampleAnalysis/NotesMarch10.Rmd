@@ -546,15 +546,19 @@ mod_6b <- glm(casual ~ season * workingday *
 
 ## Model 
 
-On Kaggle: 0.47690.
-
 ```{r}
 train_predsa <- predict(mod_6a, type = "response")
 train_predsb <- predict(mod_6b, type = "response")
 train_preds <- train_predsa + train_predsb
 actual_preds <- train$count 
 rmsle(train_preds, actual_preds)
+```
 
+## Model 
+
+On Kaggle: 0.47690.
+
+```{r}
 test_predsa <- predict(mod_6a, newdata = test,
                       type = "response")
 test_predsb <- predict(mod_6b, newdata = test,
@@ -690,24 +694,5 @@ On Kaggle: 0.77061.
 ```{r}
 test_preds <- exp(predict(mod_3, newdata = test))
 write_test_preds(test_preds, mod_name = "svm")
-```
-
-
-```{r message = FALSE, warning = FALSE}
-set.seed(825)
-mod_4 <- train(log(count) ~ ns(temp, 10) + 
-                 ns(hour, 10) * workingday + year,
-               data = train,
-               method = "svmRadial",
-               trControl = fitControl,
-               metric = "rmsle",
-               maximize = FALSE,
-               preProcess = c("center", "scale",
-                              "spatialSign"),
-               tuneLength = 5)
-
-train_preds <- exp(predict(mod_4,
-                           newdata = train))
-rmsle(train_preds, train$count)
 ```
 
