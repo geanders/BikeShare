@@ -1,0 +1,364 @@
+---
+title: "Unsupervised Learning"
+subtitle: "James et al., Ch. 10"
+author: "Brooke Anderson"
+date: "April 19, 2016"
+fontsize: 10pt
+output: beamer_presentation
+---
+
+```{r setup, include=FALSE, message = FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(dplyr)
+library(knitr)
+library(tidyr)
+library(ggplot2)
+library(gridExtra)
+library(pander)
+```
+
+## Unsupervised learning
+
+Example applications:
+
+- Look for subgroups among samples of breast cancer patients
+- ID shoppers with similar browsing and purchase histories (recommendation system)
+
+Challenges: 
+
+- No well-defined goal
+- Hard to assess if a technique did well
+- Hard to determine if clusters just result from noise
+- Choices like number of clusters, dissimilarity measure, and type of linkage can have a big influence on results
+
+## NCI-60 panel of cancer cells
+
+There is an R package called `ISLR` that includes datasets to go along with the James textbook. 
+
+```{r echo = TRUE, eval = 1}
+library(ISLR)
+?NCI60
+```
+
+The `NCI60` dataset is microarray data from the National Cancer Institute, with expression levels on 6,830 genes from 64 cancer cells. 
+
+## NCI-60 panel of cancer cells
+
+The dataset has two parts: 
+
+- `labs`: Labels with the cancer type for each cell line. Vector, length 64. 
+- `data`: Dataframe, 64 rows, 6,830 columns.
+
+```{r echo = TRUE}
+nci_labs <- NCI60$labs
+nci_data <- NCI60$data
+
+
+nci_labs[1:4]
+```
+
+## NCI-60 panel of cancer cells
+
+```{r echo = TRUE}
+data.frame(cancer = nci_labs) %>% group_by(cancer) %>% 
+  summarize(n = n()) %>% arrange(desc(n)) %>% kable()
+```
+
+## NCI-60 panel of cancer cells
+
+For the `nci_data` part of the dataset, each row is one of the cell lines and each column gives a measure of gene expression. 
+
+```{r echo = TRUE}
+nci_data[1:5, 1:5]
+```
+
+## PCA
+
+PCA can help with exploratory data analysis. If you did pairwise scatterplots of all `r ncol(nci_data)` gene expressions, you would need loads of plots: 
+
+```{r}
+p <- ncol(nci_data)
+num_graphs <- p * (p - 1) / 2
+```
+
+
+$$
+\frac{p(p-1)}{2} = \frac{`r p`(`r p`-1)}{2} = `r num_graphs`
+$$
+
+## PCA
+
+Instead, you can plot pairwise scatterplots of the first few principal components loadings. Based on James et al., 
+
+> PCA helps create a "low-dimensional representation of the data that captures as much of the information as possible".
+
+## PCA
+
+You can use the `prcomp` function to perform a principal components analysis on a data matrix:
+
+```{r echo = TRUE}
+pr_out <- prcomp(nci_data, scale = TRUE)
+class(pr_out)
+```
+
+The output from this function has the class `prcomp`. 
+
+## PCA 
+
+As a reminder, since the output is a special class, it will have special methods of things like `print` and `summary`: 
+
+```{r}
+# ?biplot.prcomp
+names(summary(pr_out))
+```
+
+## PCA 
+
+The `$x` element of the output of `prcomp` are the value of the rotated data (i.e., the centered and scaled data multiplied by the rotation matrix):
+
+```{r echo = TRUE}
+dim(pr_out$x)
+pr_out$x[1:4, 1:4]
+```
+
+## PCA
+
+I can use this code to pull just the first three components and add the cell-type labels, to get ready to plot to look for clusters and see if they line up with cell types:
+
+```{r echo = TRUE}
+pr_groups <- as.data.frame(pr_out$x[ , 1:3]) %>% 
+  mutate(cell_type = nci_labs) 
+head(pr_groups)
+```
+
+## PCA
+
+```{r echo = TRUE, fig.width = 8, fig.height = 3.5}
+a <- ggplot(pr_groups,
+            aes(x = PC1, y = PC2, color = cell_type)) + 
+  geom_point() + theme(legend.position="none") 
+b <- a %+% aes(y = PC3)
+grid.arrange(a, b, ncol = 2)
+```
+
+## PCA
+
+To see the standard deviation explained by the first five components:
+
+```{r echo = TRUE}
+pr_out$sdev[1:5]
+```
+
+## PCA
+
+To create a scree plot: 
+
+```{r echo = TRUE, fig.width = 4, fig.height = 2.25}
+to_plot <- data.frame(PC = 1:nrow(pr_out$x),
+                      PVE = 100 * pr_out$sdev ^ 2 / 
+                        sum(pr_out$sdev ^ 2))
+ggplot(to_plot, aes(x = PC, y = PVE)) + geom_line() + 
+  theme_bw()
+```
+
+## PCA
+
+From James et al.:
+
+> "Unfortunately, there is no well-accepted objective way to decide how many principal components are enough. In Fact, the question of how many principal components are enough is inherently ill-defined, and will depend on the specific area of application and the specific data set."
+
+## Clustering methods
+
+
+Goal: Create clusters so that the within-cluster variation among observations is as low as possible.
+
+- **Hierarchical clustering**: Create a dendrogram that could be used to pick out clusters of any size.
+- **K-means clustering**: Split the observations into a certain number of clusters.
+
+You can cluster observations by features or features by observations.
+
+## Hierarchical clustering
+
+Start by standardizing the data: 
+
+```{r echo = TRUE}
+sd_data <- scale(nci_data)
+```
+
+Then use the `dist` function to measure Euclidean distance: 
+
+```{r echo = TRUE}
+data_dist <- dist(sd_data, method = "euclidean")
+class(data_dist)
+```
+
+Other `method` options: "maximum", "manhattan", "canberra", "binary", "minkowski".
+
+## Hierarchical clustering
+
+`hclust` can be applied to a `dist` object to identify clusters: 
+
+```{r echo = TRUE}
+nci_clusters <- hclust(data_dist)
+names(nci_clusters)
+class(nci_clusters)
+```
+
+The default is to cluster using complete linkage. 
+
+## Hierarchical clustering
+
+```{r echo = TRUE, fig.width = 8.5, fig.height = 4.5}
+plot(nci_clusters)
+```
+
+## Hierarchical clustering
+
+Use the cancer type for labels: 
+
+```{r echo = TRUE, fig.width = 10, fig.height = 4.5}
+plot(nci_clusters, labels = nci_labs, xlab = "",
+     ylab = "", sub = "")
+```
+
+## Hierarchical clustering
+
+**Linkage**: The dissimilarity between two groups of observations (see Table 10.2 in James et al.). 
+
+- Complete: Largest of all pairwise distances between observations in cluster A and cluster B
+- Average: Average of all pairwise distances between observations in cluster A and cluster B
+- Single: Smallest of all pairwise distances between observations in cluster A and cluster B
+- Centroid: The distance betwee the centroids of each cluster  
+
+## Hierarchical clustering
+
+By change the `hclust` arguments, you can use average linkage instead:
+
+```{r echo = TRUE, fig.width = 10, fig.height = 4.5}
+plot(hclust(data_dist, method = "average"),
+     labels = nci_labs, xlab = "",
+     ylab = "", sub = "")
+```
+
+## Hierarchical clustering
+
+Or single linkage:
+
+```{r echo = TRUE, fig.width = 10, fig.height = 4.5}
+plot(hclust(data_dist, method = "single"),
+     labels = nci_labs, xlab = "",
+     ylab = "", sub = "")
+```
+
+## Cutting down to fewer clusters
+
+You can use the `cutree` function to cut the cluster dendrogram at a certain height to only get a certain number of clusters. For example, to get four clusters:
+
+```{r echo = TRUE}
+hc_clusters <- cutree(nci_clusters, 4)
+hc_clusters
+```
+
+## Cutting down to fewer clusters
+
+```{r echo = TRUE}
+data.frame(cancer = nci_labs, cluster = hc_clusters) %>%
+  group_by(cluster) %>% 
+  summarize(cancers = paste(unique(cancer), collapse = ", ")) %>%
+  pander(split.cell = 70)
+```
+
+## Cutting down to fewer clusters
+
+```{r echo = TRUE, eval = FALSE}
+data.frame(cancer = nci_labs, cluster = hc_clusters) %>%
+  group_by(cluster, cancer) %>% 
+  summarize(n = n(), 
+            cancers = paste0(cancer[1], " (", n(), ")")) %>%
+  arrange(cluster, desc(n)) %>%
+  ungroup() %>% 
+  select(-cancer, -n) %>%
+  group_by(cluster) %>%
+  summarize(cancers = paste(cancers, collapse = ", ")) %>%
+  pander(split.cell = 70)
+```
+
+## Cutting down to fewer clusters
+
+```{r}
+data.frame(cancer = nci_labs, cluster = hc_clusters) %>%
+  group_by(cluster, cancer) %>% 
+  summarize(n = n(), 
+            cancers = paste0(cancer[1], " (", n(), ")")) %>%
+  arrange(cluster, desc(n)) %>%
+  ungroup() %>% 
+  select(-cancer, -n) %>%
+  group_by(cluster) %>%
+  summarize(cancers = paste(cancers, collapse = ", ")) %>%
+  pander(split.cell = 70)
+```
+
+## K-means clustering
+
+```{r echo = TRUE}
+set.seed(2)
+km_out <- kmeans(sd_data, 4, nstart = 20)
+class(km_out)
+names(km_out)
+```
+
+## K-means clustering
+
+```{r echo = TRUE}
+km_clusters <- km_out$cluster
+table(km_clusters, hc_clusters)
+```
+
+## K-means clustering
+
+```{r}
+data.frame(cancer = nci_labs, cluster = km_clusters) %>%
+  group_by(cluster, cancer) %>% 
+  summarize(n = n(), 
+            cancers = paste0(cancer[1], " (", n(), ")")) %>%
+  arrange(cluster, desc(n)) %>%
+  ungroup() %>% 
+  select(-cancer, -n) %>%
+  group_by(cluster) %>%
+  summarize(cancers = paste(cancers, collapse = ", ")) %>%
+  pander(split.cell = 70)
+```
+
+## K-means clustering
+
+```{r}
+data.frame(cancer = nci_labs, cluster = kmeans(sd_data, 2, nstart = 20)$cluster) %>%
+  group_by(cluster, cancer) %>% 
+  summarize(n = n(), 
+            cancers = paste0(cancer[1], " (", n(), ")")) %>%
+  arrange(cluster, desc(n)) %>%
+  ungroup() %>% 
+  select(-cancer, -n) %>%
+  group_by(cluster) %>%
+  summarize(cancers = paste(cancers, collapse = ", ")) %>%
+  pander(split.cell = 70)
+```
+
+
+
+
+## K-means clustering
+
+```{r}
+data.frame(cancer = nci_labs, cluster = kmeans(sd_data, 6, nstart = 20)$cluster) %>%
+  group_by(cluster, cancer) %>% 
+  summarize(n = n(), 
+            cancers = paste0(cancer[1], " (", n(), ")")) %>%
+  arrange(cluster, desc(n)) %>%
+  ungroup() %>% 
+  select(-cancer, -n) %>%
+  group_by(cluster) %>%
+  summarize(cancers = paste(cancers, collapse = ", ")) %>%
+  pander(split.cell = 70)
+```
+
