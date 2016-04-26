@@ -1,0 +1,182 @@
+---
+title: "`data.table`: Fast manipulation of large datasets in R"
+author: "Brooke Anderson"
+date: "April 25, 2016"
+fontsize: 10pt
+output: beamer_presentation
+---
+
+## `data.table`
+
+`data.table` is a package in R that can efficiently read in and manipulate large datasets. It offers a **substantial** speed improvement over the classic `data.frame` when working with large datasets. 
+
+## Example: US precipitation
+
+As an example, I have a file with daily precipitation measures for every US county from 1979 through 2011: 
+
+- 365 days * 33
+- ~3,000 counties
+
+This file has > 37,000,000 lines. The total file size is 2.26 GB. 
+
+## Reading in a large text file
+
+`fread` is the `data.table` equivalent of the `read.table` family of functions: 
+
+```{r echo = FALSE}
+precip_dir <- "/Users/brookeanderson/Documents/CSU2016/hurricaneproject/hurricaneexposure/data-raw/"
+```
+
+```{r message = FALSE}
+library(data.table)
+system.time(precip <- fread(paste0(precip_dir,
+                       "nasa_precip_export_2.txt"),
+                      header = TRUE,
+                      select = c("county",
+                                 "year_month_day",
+                                 "precip"),
+                      verbose = FALSE))
+dim(precip)
+```
+
+## Reading in a large text file
+
+`fread` can also read a file directly from http and https URLs, if you'd prefer to not save the flat file locally. 
+
+## Manipulating a `data.table`
+
+The `data.table` class has a series of conventions for summarizing and indexing that runs much, much faster than if you tried to use "classic" R functions. 
+
+The general form is: 
+
+```{r eval = FALSE}
+precip[i, j, by]
+```
+
+where `i` filters by row, `j` selects or calculates on columns, and `by` groups by some grouping variable when selecting or calculating using columns.
+
+## Manipulating a `data.table`
+
+You can use the first element to filter to certain rows. For example, to pull out just values for Larimer County, CO, run: 
+
+```{r}
+precip[county == 8069 & 
+         year_month_day %in% 
+         c(19970727, 19970728), ]
+```
+
+## Manipulating a `data.table`
+
+You can use the `order` function in the first element to sort the data: 
+
+```{r}
+head(precip[order(-precip), ])
+```
+
+## Manipulating a `data.table`
+
+You can run calculations on columns using the second element: 
+
+```{r}
+precip[ , max(precip)]
+precip[ , quantile(precip,
+                   probs = c(0.99, 0.999,
+                             0.9999))]
+```
+
+## Manipulating a `data.table`
+
+You can combine filtering by rows and calculating on columns. For example, to figure out how many counties there were in 2011: 
+
+```{r}
+precip[year_month_day == 20110101,
+       length(precip)]
+```
+
+*Note*: If you want to count rows, you can also use `.N`:
+
+```{r}
+precip[year_month_day == 20110101,
+       .N]
+```
+
+## Grouped analysis
+
+You can also group by a variable before you run an analysis. For example, to get the highest recorded precipitation in each county: 
+
+```{r}
+highest_precip <- precip[ , .(max.precip = max(precip)),
+                          by = .(county)]
+head(highest_precip, 3)
+```
+
+## Highest precipitation by county
+
+```{r echo = FALSE, warning = FALSE, message = FALSE, fig.width = 8}
+library(dplyr)
+highest_precip <- rename(highest_precip, 
+                          region = county, 
+                          value = max.precip)
+
+library(choroplethr)
+county_choropleth(highest_precip)
+```
+
+## Chaining operation with `data.table`
+
+If you want to, you can chain together several operations. For example, to determine the number of days over the 99.9th percentile in each county:
+
+```{r}
+extreme_precip <- precip[ , .N, .(precip > 
+                                    quantile(precip,
+                                             probs = 0.999),
+                                 county)][
+                          precip == TRUE, 
+                        ]
+```
+
+## Extreme precipitation by county
+
+```{r echo = FALSE, warning = FALSE, message = FALSE, fig.width = 8}
+extreme_precip <- rename(extreme_precip, 
+                          region = county, 
+                          value = N)
+county_choropleth(extreme_precip)
+```
+
+## Chaining operation with `data.table`
+
+To plot trends by month within states: 
+
+```{r}
+ts_precip <- precip[ , .(precip = precip,
+                         state = substring(sprintf("%05d",
+                                                   county),
+                                           1, 2),
+                         month = as.numeric(
+                           substring(year_month_day,
+                                           5, 6)))][
+                     , .(precip = mean(precip)),
+                     keyby = .(state, month)                        
+                     ]
+```
+
+## Precipitation by month and state
+
+```{r echo = FALSE, fig.width = 8}
+library(dplyr)
+ts_precip2 <- filter(as.data.frame(ts_precip), 
+                     state %in% c("22", "08", "51", "32")) %>%
+  mutate(state = factor(state,
+                        levels = c("22", "08", "51", "32"),
+                        labels = c("Louisiana", "Colorado",
+                                   "Virginia", "Nevada")))
+library(ggplot2)
+ggplot(ts_precip2, aes(x = month, y = precip)) + 
+  geom_line() + 
+  facet_wrap(~ state, ncol = 2)
+```
+
+
+
+
